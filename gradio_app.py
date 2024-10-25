@@ -24,7 +24,7 @@ is_shared_ui = False
 is_gpu_associated = torch.cuda.is_available()
 
 # Download weights if not present
-if not os.path.exists(weights_dir):
+if not is_shared_ui:
     snapshot_download(
         repo_id='rhymes-ai/Allegro',
         allow_patterns=[
