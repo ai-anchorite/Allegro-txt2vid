@@ -12,7 +12,7 @@ torch.backends.cudnn.allow_tf32 = True
 
 def vae_inference(args):
 
-    # vae have better performance in float32
+    # vae have better formance in float32
     vae = AllegroAutoencoderKL3D.from_pretrained(args.vae, torch_dtype=torch.float32).cuda()
 
     vae.eval()
