@@ -147,4 +147,4 @@ with gr.Blocks() as demo:
     )
 
 # Launch the interface
-demo.launch(show_error=True)
+demo.launch(share=False)
