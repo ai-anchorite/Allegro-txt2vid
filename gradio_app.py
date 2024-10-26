@@ -187,37 +187,40 @@ def randomize_seed():
 
     
 def get_system_info():
-    """Get detailed system status with both nvidia-smi and PyTorch metrics"""
+    """Get detailed system status including peak VRAM and shared memory"""
     try:
-        import subprocess
+        # Basic GPU name
         gpu_info = f"🎮 GPU: {torch.cuda.get_device_name(0)}\n"
         
-        # GPU memory from nvidia-smi
-        result = subprocess.check_output([
-            'nvidia-smi', '--query-gpu=memory.used,memory.total,temperature.gpu,utilization.gpu',
-            '--format=csv,nounits,noheader'
-        ], encoding='utf-8')
-        memory_used, memory_total, temp, util = map(int, result.strip().split(','))
-        gpu_memory = memory_used / 1024  # Convert MB to GB
-        total_memory = memory_total / 1024
+        # Get GPU metrics from nvidia-smi
+        try:
+            result = subprocess.check_output([
+                'nvidia-smi', '--query-gpu=memory.used,memory.total,memory.reserved,temperature.gpu,utilization.gpu',
+                '--format=csv,nounits,noheader'
+            ], encoding='utf-8', timeout=1.0)
+            memory_used, memory_total, memory_reserved, temp, util = map(int, result.strip().split(','))
+            
+            # Convert memory to GB for display
+            gpu_memory = memory_used / 1024  # Convert MB to GB
+            total_memory = memory_total / 1024
+            shared_memory = memory_reserved / 1024
+            
+            gpu_info += f"📊 GPU Memory: {gpu_memory:.1f}GB / {total_memory:.1f}GB\n"
+            gpu_info += f"💫 Shared Memory: {shared_memory:.1f}GB\n"
+            gpu_info += f"🌡️ GPU Temp: {temp}°C\n"
+            gpu_info += f"⚡ GPU Load: {util}%\n"
+            
+        except:
+            gpu_info += "Unable to get detailed GPU metrics\n"
+            
+        # Quick CPU and RAM checks
+        cpu_info = f"💻 CPU Usage: {psutil.cpu_percent()}%\n"
+        ram_info = f"🎯 RAM Usage: {psutil.virtual_memory().percent}%"
         
-        # Peak memory from PyTorch
-        peak_memory = torch.cuda.max_memory_allocated(0)/1024**3
-        
-        gpu_info += f"📊 GPU Memory: {gpu_memory:.1f}GB / {total_memory:.1f}GB\n"
-        gpu_info += f"📈 Peak Usage: {peak_memory:.1f}GB\n"
-        gpu_info += f"🌡️ GPU Temp: {temp}°C\n"
-        gpu_info += f"⚡ GPU Load: {util}%\n"
+        return f"{gpu_info}{cpu_info}{ram_info}"
         
     except Exception as e:
-        gpu_info = f"🎮 GPU: {torch.cuda.get_device_name(0)}\n"
-        gpu_info += f"📊 VRAM Reserved: {torch.cuda.memory_reserved(0)/1024**3:.2f}GB\n"
-        gpu_info += f"📈 Peak Usage: {torch.cuda.max_memory_allocated(0)/1024**3:.2f}GB\n"
-    
-    cpu_info = f"💻 CPU Usage: {psutil.cpu_percent(interval=1.0)}%\n"
-    ram_info = f"🎯 RAM Usage: {psutil.virtual_memory().percent}%"
-    
-    return f"{gpu_info}{cpu_info}{ram_info}"
+        return f"Error collecting system info: {str(e)}"
 
 
 def generate_output_path(user_prompt):
@@ -325,7 +328,7 @@ with gr.Blocks() as demo:
                 
             with gr.Row():
                 seed = gr.Slider(minimum=0, maximum=10000, step=1, label="Seed", value=42, scale=3)
-                random_seed = gr.Button("🎲", size="sm", scale=1)
+                random_seed = gr.Button("🎲", scale=1)
             with gr.Row():
                 enable_cpu_offload = gr.Checkbox(label="Enable CPU Offload", value=True, scale=1)
                     
@@ -356,14 +359,21 @@ with gr.Blocks() as demo:
                 )
 
     # Event handlers
+    
     random_seed.click(fn=randomize_seed, outputs=seed)
     
     # Timer that updates system info if system view is selected
-    timer = gr.Timer(value=1)
+    timer = gr.Timer(value=2)
     timer.tick(
         fn=lambda display_type: get_system_info() if display_type == "system" else status_info.value,
         inputs=[info_type],
         outputs=status_info
+    )
+    
+    info_type.change(
+        fn=update_info_display,
+        inputs=[info_type],
+        outputs=[status_info]
     )
     
     open_folder_btn.click(
