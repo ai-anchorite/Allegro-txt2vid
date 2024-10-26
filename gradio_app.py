@@ -23,7 +23,7 @@ from allegro.models.transformers.transformer_3d_allegro import AllegroTransforme
 
 device = devicetorch.get(torch)
     
-save_path = "./output_videos"  # Can be changed to a preferred directory: "C:\path\to\save_folder"
+save_path = "output_videos"  # Can be changed to a preferred directory: "C:\path\to\save_folder"
 FPS = 15
 VIDEO_QUALITY = 8  # imageio quality setting (0-10, higher is better)
 
@@ -33,13 +33,12 @@ os.makedirs(weights_dir, exist_ok=True)
 # prompt templates
 POSITIVE_TEMPLATE = """(masterpiece), (best quality), (ultra-detailed), (unwatermarked),
 
-
 emotional, harmonious, vignette, 4k epic detailed, shot on kodak, 35mm photo, sharp focus, high budget, cinemascope, moody, epic, gorgeous"""
 
 NEGATIVE_TEMPLATE = """lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry.
 """
 
-# Function to check if weights are already downloaded
+# check if weights are already downloaded
 def check_weights_exist():
     required_paths = [
         './allegro_weights/scheduler',
@@ -148,6 +147,45 @@ def single_inference(user_prompt, negative_prompt, save_path, guidance_scale, nu
             print(f"Cleanup warning (non-critical): {str(e)}")
 
 
+def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_steps, seed, enable_cpu_offload, progress=gr.Progress(track_tqdm=True)):
+    output_path = generate_output_path(user_prompt)
+    
+    try:
+        # Create output directory
+        os.makedirs(save_path, exist_ok=True)
+        
+        result_path = single_inference(
+            user_prompt=user_prompt,
+            negative_prompt=negative_prompt,
+            save_path=output_path, 
+            guidance_scale=guidance_scale,
+            num_sampling_steps=num_sampling_steps,
+            seed=seed,
+            enable_cpu_offload=enable_cpu_offload
+        )
+        
+        # Save prompt info alongside the video
+        if result_path:
+            save_prompt_info(
+                result_path,
+                user_prompt,
+                negative_prompt,
+                guidance_scale,
+                num_sampling_steps,
+                seed
+            )
+            
+        return result_path
+    
+    except Exception as e:
+        print(f"Error during generation: {str(e)}")
+        return None
+     
+     
+def randomize_seed():
+    return random.randint(0, 10000)
+
+    
 def get_system_info():
     """Get detailed system status with both nvidia-smi and PyTorch metrics"""
     try:
@@ -182,19 +220,9 @@ def get_system_info():
     return f"{gpu_info}{cpu_info}{ram_info}"
 
 
-
-
-def get_completion_message(output_path):
-    timestamp = datetime.now().strftime("%y%m%d_%H%M")
-    return f"""✨ Generation Complete!
-💾 Saved as: alle_{timestamp}.mp4
-
-{get_system_info()}"""
-
-
 def generate_output_path(user_prompt):
     timestamp = datetime.now().strftime("%y%m%d_%H%M")  
-    return f"./save_path/alle_{timestamp}.mp4"
+    return f"{save_path}/alle_{timestamp}.mp4"  
 
 
 def save_prompt_info(video_path, user_prompt, negative_prompt, guidance_scale, steps, seed):
@@ -208,42 +236,26 @@ def save_prompt_info(video_path, user_prompt, negative_prompt, guidance_scale, s
         f.write(f"Generated: {datetime.now().strftime('%y%m%d_%H%M')}\n")
 
 
-def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_steps, seed, enable_cpu_offload, progress=gr.Progress(track_tqdm=True)):
-    output_path = generate_output_path(user_prompt)
+def open_output_folder():
+    folder_path = os.path.abspath(save_path) 
     
+    # Create folder if it doesn't exist
     try:
-        result_path = single_inference(
-            user_prompt=user_prompt,
-            negative_prompt=negative_prompt,
-            save_path=output_path,
-            guidance_scale=guidance_scale,
-            num_sampling_steps=num_sampling_steps,
-            seed=seed,
-            enable_cpu_offload=enable_cpu_offload
-        )
-        
-        # Save prompt info alongside the video
-        if result_path:
-            save_prompt_info(
-                result_path,
-                user_prompt,
-                negative_prompt,
-                guidance_scale,
-                num_sampling_steps,
-                seed
-            )
-            
-        return result_path
-    
+        os.makedirs(folder_path, exist_ok=True)
     except Exception as e:
-        print(f"Error during generation: {str(e)}")
-        return None
-     
+        return f"Error creating folder: {str(e)}"
+        
+    # Open folder
+    try:
+        if os.name == 'nt':  # Windows
+            os.startfile(folder_path)
+        elif os.name == 'posix':  # macOS and Linux
+            subprocess.run(['xdg-open' if os.name == 'posix' else 'open', folder_path])
+        return f"Opening folder: {folder_path}"
+    except Exception as e:
+        return f"Error opening folder: {str(e)}"
 
-def randomize_seed():
-    return random.randint(0, 10000)
-    
-    
+        
 def update_info_display(display_type):
     if display_type == "welcome":
         return get_welcome_message()
@@ -333,6 +345,7 @@ with gr.Blocks() as demo:
                     label="Information Display",
                     interactive=True
                 )
+                open_folder_btn = gr.Button("📁 Open Output Folder")
             
             with gr.Row():
                 status_info = gr.Textbox(
@@ -345,13 +358,6 @@ with gr.Blocks() as demo:
     # Event handlers
     random_seed.click(fn=randomize_seed, outputs=seed)
     
-    # Simple display type change handler
-    info_type.change(
-        fn=update_info_display,
-        inputs=[info_type],
-        outputs=[status_info]
-    )
-    
     # Timer that updates system info if system view is selected
     timer = gr.Timer(value=1)
     timer.tick(
@@ -360,7 +366,12 @@ with gr.Blocks() as demo:
         outputs=status_info
     )
     
-    # Simplified generation flow - no completion message
+    open_folder_btn.click(
+        fn=open_output_folder,
+        inputs=None,
+        outputs=status_info
+    )
+    
     submit_btn.click(
         fn=run_inference,
         inputs=[user_prompt, negative_prompt, guidance_scale, 
