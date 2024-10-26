@@ -8,6 +8,7 @@ import subprocess
 import warnings
 import random
 import gc
+import devicetorch
 
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +21,7 @@ from allegro.pipelines.pipeline_allegro import AllegroPipeline
 from allegro.models.vae.vae_allegro import AllegroAutoencoderKL3D
 from allegro.models.transformers.transformer_3d_allegro import AllegroTransformer3DModel
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = devicetorch.get(torch)
     
 save_path = "./output_videos"  # Can be changed to a preferred directory: "C:\path\to\save_folder"
 FPS = 15
@@ -181,10 +182,6 @@ def get_system_info():
     return f"{gpu_info}{cpu_info}{ram_info}"
 
 
-def update_system_info():
-    return f"""🎮 System Status:
-
-{get_system_info()}"""
 
 
 def get_completion_message(output_path):
@@ -224,6 +221,18 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
             seed=seed,
             enable_cpu_offload=enable_cpu_offload
         )
+        
+        # Save prompt info alongside the video
+        if result_path:
+            save_prompt_info(
+                result_path,
+                user_prompt,
+                negative_prompt,
+                guidance_scale,
+                num_sampling_steps,
+                seed
+            )
+            
         return result_path
     
     except Exception as e:
@@ -234,6 +243,13 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
 def randomize_seed():
     return random.randint(0, 10000)
     
+    
+def update_info_display(display_type):
+    if display_type == "welcome":
+        return get_welcome_message()
+    else:
+        return get_system_info()
+        
     
 def get_welcome_message():
     return """Welcome to Allegro Text-to-Video!
@@ -273,6 +289,7 @@ title = """
 </div>
 """
 
+
 # Create Gradio interface
 with gr.Blocks() as demo:
     gr.HTML(title)
@@ -300,8 +317,6 @@ with gr.Blocks() as demo:
             with gr.Row():
                 enable_cpu_offload = gr.Checkbox(label="Enable CPU Offload", value=True, scale=1)
                     
-                    
-            
         with gr.Column():    
             negative_prompt = gr.Textbox(
                 value=NEGATIVE_TEMPLATE,
@@ -310,6 +325,15 @@ with gr.Blocks() as demo:
                 lines=2
             )
                
+            # Info display section with radio toggle
+            with gr.Row():
+                info_type = gr.Radio(
+                    choices=["welcome", "system"],
+                    value="welcome",
+                    label="Information Display",
+                    interactive=True
+                )
+            
             with gr.Row():
                 status_info = gr.Textbox(
                     label="Status",
@@ -318,33 +342,32 @@ with gr.Blocks() as demo:
                     value=get_welcome_message()
                 )
 
-
+    # Event handlers
     random_seed.click(fn=randomize_seed, outputs=seed)
-    timer = gr.Timer(1, active=False)  # 1 second interval, starts inactive
     
-    # Timer updates system info
+    # Simple display type change handler
+    info_type.change(
+        fn=update_info_display,
+        inputs=[info_type],
+        outputs=[status_info]
+    )
+    
+    # Timer that updates system info if system view is selected
+    timer = gr.Timer(value=1)
     timer.tick(
-        fn=update_system_info,
-        inputs=None,
+        fn=lambda display_type: get_system_info() if display_type == "system" else status_info.value,
+        inputs=[info_type],
         outputs=status_info
     )
     
-    # Complete flow: start timer -> generate -> stop timer and show completion
+    # Simplified generation flow - no completion message
     submit_btn.click(
-        fn=lambda: gr.Timer(active=True),  # Start timer
-        inputs=None,
-        outputs=timer
-    ).then(  # Generate video
         fn=run_inference,
         inputs=[user_prompt, negative_prompt, guidance_scale, 
                 num_sampling_steps, seed, enable_cpu_offload],
         outputs=video_output,
         show_progress=True
-    ).then(  # Stop timer and show completion
-        fn=lambda: (gr.Timer(active=False), get_completion_message()),
-        outputs=[timer, status_info]
     )
 
-   
 # Launch the interface
 demo.launch(share=False)
