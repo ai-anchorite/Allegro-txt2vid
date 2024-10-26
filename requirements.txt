@@ -12,3 +12,4 @@ imageio
 imageio-ffmpeg
 ftfy
 bs4
+psutil #for live system stat monitoring in console
