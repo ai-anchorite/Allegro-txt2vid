@@ -292,17 +292,7 @@ Ready to generate? Enter your prompt above and click 'Generate Video'"""
 
     
 #UI title bar  
-title = """
-<style>
-.title-container{text-align:center;margin:auto;padding:8px 12px;background:linear-gradient(to bottom,#162828,#101c1c);color:#fff;border-radius:8px;font-family:Arial,sans-serif;border:2px solid #0a1212;box-shadow:0 2px 4px rgba(0,0,0,0.1);position:relative}.title-container h1{font-size:2em;margin:0 0 5px;font-weight:300;color:#ff6b35}.title-container p{color:#b0c4c4;font-size:0.9em;margin:0 0 5px}.title-container a{color:#ff6b35;text-decoration:none;transition:color 0.3s ease}.title-container a:hover{color:#ff8c5a}.links-left,.links-right{position:absolute;bottom:5px;font-size:0.8em;color:#a0a0a0}.links-left{left:10px}.links-right{right:10px}.emoji-icon{vertical-align:middle;margin-right:3px;font-size:1em}
-</style>
-<div class="title-container">
-<h1>Allegro Text-to-Video</h1>
-<p>Transform your prompts into video - Takes about an hour for completion.</p>
-<div class="links-left"><span class="emoji-icon">⚡</span>Powered by <a href="https://pinokio.computer/" target="_blank">Pinokio</a></div>
-<div class="links-right">OG Project by <a href="https://github.com/rhymes-ai/Allegro" target="_blank">Rhymes</a> | gradio_app code borrowed from <a href="https://huggingface.co/spaces/fffiloni/allegro-text2video" target="_blank">fffiloni</a></div>
-</div>
-"""
+title = """<style>.allegro-banner{background:linear-gradient(to bottom,#162828,#101c1c);color:#fff;padding:0.5rem;border-radius:0.5rem;border:1px solid rgba(255,255,255,0.1);box-shadow:0 4px 6px rgba(0,0,0,0.1);margin-bottom:0.5rem;text-align:center}.allegro-banner h1{font-size:1.75rem;margin:0 0 0.25rem 0;font-weight:300;color:#ff6b35 !important}.allegro-banner p{color:#b0c4c4;font-size:1rem;margin:0 0 0.75rem 0}.allegro-banner .footer{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;font-size:0.875rem;color:#a0a0a0}.allegro-banner .powered-by{display:flex;align-items:center;gap:0.25rem}.allegro-banner .credits{display:flex;flex-direction:column;align-items:center;gap:0.25rem}.allegro-banner a{color:#4a9eff;text-decoration:none;transition:color 0.2s ease}.allegro-banner a:hover{color:#6db3ff}@media (max-width:768px){.allegro-banner .footer{flex-direction:column;gap:0.5rem;align-items:center}}</style><div class="allegro-banner"><h1>Allegro Text-to-Video</h1><p>Transform your prompts to video.</p><div class="footer"><div class="powered-by"><span>⚡ Powered by</span><a href="https://pinokio.computer/" target="_blank">Pinokio</a></div><div class="credits"><div>OG Project: <a href="https://github.com/rhymes-ai/Allegro" target="_blank">Rhymes</a></div><div>Code borrowed from: <a href="https://huggingface.co/spaces/fffiloni/allegro-text2video" target="_blank">fffiloni</a></div></div></div></div>"""
 
 
 # Create Gradio interface
