@@ -887,7 +887,7 @@ with gr.Blocks() as demo:
                 enable_cpu_offload = gr.Checkbox(label="Enable CPU Offload", info="Don't touch unless certain!", value=True)
                 target_fps = gr.Radio(
                     choices=["15 FPS (Original)", "30 FPS", "60 FPS"],
-                    value="15 FPS (Original)",
+                    value="60 FPS",
                     label="Interpolation Options",
                 )
 
