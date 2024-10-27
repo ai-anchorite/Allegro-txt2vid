@@ -6,6 +6,7 @@
 # References:
 # Open-Sora-Plan: https://github.com/PKU-YuanGroup/Open-Sora-Plan
 # --------------------------------------------------------
+# gagging the nags on inference start
 import warnings
 warnings.filterwarnings('ignore', message='torch.backends.cuda.sdp_kernel.*', category=FutureWarning)
 warnings.filterwarnings('ignore', message='.*Torch was not compiled with flash attention.*', category=UserWarning)
