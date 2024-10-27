@@ -368,8 +368,7 @@ def generate_output_path(user_prompt):
     return f"{save_path}/alle_{timestamp}.mp4"  
 
 
-# add save_prompt_info to txt file saved to outputs folder
-def save_prompt_info(video_path, user_prompt, negative_prompt, guidance_scale, steps, seed, test_mode=False):
+def save_prompt_info(video_path, user_prompt, negative_prompt, guidance_scale, steps, seed, test_mode=False, target_fps=None):
     info_path = video_path.replace('.mp4', '_info.txt')
     with open(info_path, 'w') as f:
         f.write(f"Prompt: {user_prompt}\n")
@@ -378,6 +377,8 @@ def save_prompt_info(video_path, user_prompt, negative_prompt, guidance_scale, s
         f.write(f"Steps: {steps}\n")
         f.write(f"Seed: {seed}\n")
         f.write(f"Test Mode: {'Yes' if test_mode else 'No'}\n")
+        if target_fps:
+            f.write(f"Target FPS: {target_fps}\n")
         f.write(f"Generated: {datetime.now().strftime('%y%m%d_%H%M')}\n")
 
 
