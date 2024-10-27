@@ -741,7 +741,7 @@ def test_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_st
 
 def process_existing_video(video_path, target_fps, progress=gr.Progress(track_tqdm=True)):
     """Process an existing video file with RIFE interpolation"""
-    console_text = ""  # Initialize empty console text
+    console_text = ""
     
     msg = f"Loading video: {video_path}"
     print(msg)
@@ -759,65 +759,68 @@ def process_existing_video(video_path, target_fps, progress=gr.Progress(track_tq
         # Get original video info
         reader = imageio.get_reader(video_path)
         original_fps = reader.get_meta_data()['fps']
-        duration = len(video_frames) / original_fps  # Calculate original duration in seconds
+        original_frame_count = len(video_frames)
+        duration = original_frame_count / original_fps
         reader.close()
         
-        # Parse target FPS
-        if isinstance(target_fps, str):
-            fps = int(target_fps.split()[0])
-        else:
-            fps = int(target_fps)
+        # Parse multiplier from choice
+        multiplier_map = {
+            "2x fps": 2,
+            "3x fps": 3,
+            "4x fps": 4
+        }
+        fps_multiplier = multiplier_map.get(target_fps, 2)  # Default to 2x if unknown
+        target_fps = original_fps * fps_multiplier
             
-        # Skip if no interpolation needed
-        if fps <= original_fps:
-            msg = f"Target FPS ({fps}) is not higher than original FPS ({original_fps})"
-            print(msg)
-            console_text = log_to_console(msg, console_text)
-            return video_path, console_text
-            
-        # Process the video
-        msg = f"Starting interpolation: {original_fps}fps → {fps}fps"
+        msg = (f"Starting interpolation:\n"
+               f"• Input: {original_frame_count} frames @ {original_fps}fps ({duration:.2f}s)\n"
+               f"• Multiplier: {fps_multiplier}x\n"
+               f"• Target: {original_frame_count * fps_multiplier:.0f} frames @ {target_fps:.1f}fps")
         print(msg)
         console_text = log_to_console(msg, console_text)
         
-        interpolator = VideoInterpolator()
-        interpolated_frames = interpolator.process_video(video_frames, target_fps=fps)
-        
-        if not isinstance(interpolated_frames, (list, np.ndarray)) or len(interpolated_frames) == 0:
-            msg = "Error: Interpolation failed"
-            print(msg)
-            console_text = log_to_console(msg, console_text)
-            return video_path, console_text
+        # Process frames
+        result_frames = []
+        for i in range(len(video_frames) - 1):
+            # Add original frame
+            result_frames.append(video_frames[i])
             
-        # Calculate expected frame count to maintain original duration
-        expected_frame_count = int(duration * fps)
+            # Generate intermediate frames based on multiplier
+            for j in range(int(fps_multiplier - 1)):
+                timestep = (j + 1) / fps_multiplier
+                interpolated = interpolate_frames(
+                    video_frames[i], 
+                    video_frames[i + 1], 
+                    timestep
+                )
+                result_frames.append(interpolated)
+                
+        # Add final frame
+        result_frames.append(video_frames[-1])
         
-        # Adjust frame sequence if necessary
-        if len(interpolated_frames) > expected_frame_count:
-            msg = f"Adjusting frame count to maintain original duration..."
-            print(msg)
-            console_text = log_to_console(msg, console_text)
-            # Take only the frames needed to maintain original duration
-            interpolated_frames = interpolated_frames[:expected_frame_count]
+        # Convert frames if needed
+        if hasattr(result_frames[0], 'convert'):
+            result_frames = [np.array(frame.convert('RGB')) for frame in result_frames]
         
-        # Create interpolated directory if it doesn't exist
+        # Create output path
         os.makedirs(INTERPOLATED_PATH, exist_ok=True)
-        
-        # Generate output path in interpolated folder
         filename = os.path.basename(video_path)
         name, ext = os.path.splitext(filename)
-        output_path = os.path.join(INTERPOLATED_PATH, f"{name}_{fps}fps{ext}")
+        output_path = os.path.join(INTERPOLATED_PATH, f"{name}_{fps_multiplier}x{ext}")
         
         # Save the interpolated video
         msg = f"Saving interpolated video to: {output_path}"
         print(msg)
         console_text = log_to_console(msg, console_text)
         
-        imageio.mimwrite(output_path, interpolated_frames, fps=fps, quality=VIDEO_QUALITY)
+        imageio.mimwrite(output_path, result_frames, fps=target_fps, quality=VIDEO_QUALITY)
         
-        msg = f"✨ Interpolation complete! Original duration: {duration:.2f}s, New frame count: {len(interpolated_frames)}"
-        print(msg)
-        console_text = log_to_console(msg, console_text)
+        final_duration = len(result_frames) / target_fps
+        final_msg = (f"✨ Interpolation complete!\n"
+                    f"• Original: {original_frame_count} frames @ {original_fps}fps ({duration:.2f}s)\n"
+                    f"• Final: {len(result_frames)} frames @ {target_fps:.1f}fps ({final_duration:.2f}s)")
+        print(final_msg)
+        console_text = log_to_console(final_msg, console_text)
         return output_path, console_text
         
     except Exception as e:
@@ -902,11 +905,12 @@ with gr.Blocks() as demo:
 
                 with gr.Row():
                     process_fps = gr.Radio(
-                        choices=["30 FPS", "60 FPS"],
-                        value="30 FPS",
-                        label="Target FPS",
+                        choices=["2x fps", "3x fps", "4x fps"],
+                        value="2x fps",
+                        label="Frame Multiplier",
                         info="wip. no audio. designed for manual interpolation of previously generated video."
                     )
+                with gr.Row():    
                     process_btn = gr.Button("Process Video Interpolation", variant="primary")
                     
         with gr.Column():    
