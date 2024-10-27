@@ -12,4 +12,5 @@ imageio
 imageio-ffmpeg
 ftfy
 bs4
-psutil #for live system stat monitoring in console
+psutil # for live system stat monitoring in console
+pytorch-msssim   # for managing interpolation files

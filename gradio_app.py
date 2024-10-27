@@ -1,57 +1,67 @@
-import torch
-import imageio
+# Standard library imports
 import os
-import gradio as gr
-import time
-import psutil
-import subprocess
-import warnings
-import random
 import gc
-import devicetorch
-
+import time
+import random
+import warnings
+import subprocess
+import psutil
 from datetime import datetime
 from pathlib import Path
 from subprocess import getoutput
-from huggingface_hub import snapshot_download
 
+# Third-party imports
+import numpy as np
+import torch
+import gradio as gr
+import imageio
+import devicetorch
+
+from rife_adapter import EnhancedRIFEModel
+from huggingface_hub import snapshot_download
+from huggingface_hub import hf_hub_download
+from torchvision.transforms.functional import to_tensor, to_pil_image
+
+# ML/AI framework imports
 from diffusers.schedulers import EulerAncestralDiscreteScheduler
 from transformers import T5EncoderModel, T5Tokenizer
+
+# Allegro-specific imports
 from allegro.pipelines.pipeline_allegro import AllegroPipeline
 from allegro.models.vae.vae_allegro import AllegroAutoencoderKL3D
 from allegro.models.transformers.transformer_3d_allegro import AllegroTransformer3DModel
 
+
+# Constants and configurations
 device = devicetorch.get(torch)
-    
 save_path = "output_videos"  # Can be changed to a preferred directory: "C:\path\to\save_folder"
+INTERPOLATED_PATH = os.path.join(save_path, "interpolated")
 FPS = 15
 VIDEO_QUALITY = 8  # imageio quality setting (0-10, higher is better)
 
-weights_dir = './allegro_weights'
-os.makedirs(weights_dir, exist_ok=True)
 
-# prompt templates
+# Templates
 POSITIVE_TEMPLATE = """(masterpiece), (best quality), (ultra-detailed), (unwatermarked),
 
 emotional, harmonious, vignette, 4k epic detailed, shot on kodak, 35mm photo, sharp focus, high budget, cinemascope, moody, epic, gorgeous"""
 
-NEGATIVE_TEMPLATE = """lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry.
-"""
+NEGATIVE_TEMPLATE = """lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry."""
 
-# check if weights are already downloaded
-def check_weights_exist():
-    required_paths = [
-        './allegro_weights/scheduler',
-        './allegro_weights/text_encoder',
-        './allegro_weights/tokenizer',
-        './allegro_weights/transformer',
-        './allegro_weights/vae'
-    ]
-    return all(os.path.exists(path) for path in required_paths)
 
-# Modified download logic
 weights_dir = './allegro_weights'
 os.makedirs(weights_dir, exist_ok=True)
+
+def check_weights_exist():
+    required_paths = [
+        os.path.join(weights_dir, folder) for folder in [
+            'scheduler',
+            'text_encoder',
+            'tokenizer',
+            'transformer',
+            'vae'
+        ]
+    ]
+    return all(os.path.exists(path) for path in required_paths)
 
 if not check_weights_exist():
     print("Downloading model weights...")
@@ -147,27 +157,84 @@ def single_inference(user_prompt, negative_prompt, save_path, guidance_scale, nu
             print(f"Cleanup warning (non-critical): {str(e)}")
 
 
-def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_steps, seed, enable_cpu_offload, progress=gr.Progress(track_tqdm=True)):
+def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_steps, 
+                 seed, enable_cpu_offload, target_fps=15, progress=gr.Progress(track_tqdm=True)):
+    console_text = ""  # Initialize empty console text
     output_path = generate_output_path(user_prompt)
-    
+    dtype = torch.float16 
     try:
-        # Create output directory
-        os.makedirs(save_path, exist_ok=True)
+        msg = "Starting video generation..."
+        print(msg)
+        console_text = log_to_console(msg, console_text)
         
-        result_path = single_inference(
-            user_prompt=user_prompt,
-            negative_prompt=negative_prompt,
-            save_path=output_path, 
+        # Load models
+        vae = AllegroAutoencoderKL3D.from_pretrained(
+            "./allegro_weights/vae/", 
+            torch_dtype=torch.float32
+        ).to(device)
+        vae.eval()
+
+        text_encoder = T5EncoderModel.from_pretrained(
+            "./allegro_weights/text_encoder/", 
+            torch_dtype=dtype
+        ).to(device)
+        text_encoder.eval()
+
+        tokenizer = T5Tokenizer.from_pretrained("./allegro_weights/tokenizer/")
+        scheduler = EulerAncestralDiscreteScheduler()
+        transformer = AllegroTransformer3DModel.from_pretrained(
+            "./allegro_weights/transformer/", 
+            torch_dtype=dtype
+        ).to(device)
+        transformer.eval()
+
+        allegro_pipeline = AllegroPipeline(
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            scheduler=scheduler,
+            transformer=transformer
+        ).to(device)
+
+        if enable_cpu_offload:
+            allegro_pipeline.enable_sequential_cpu_offload()
+
+        torch.cuda.empty_cache()
+
+        msg = "Loading complete. Starting pipeline..."
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        
+        out_video = allegro_pipeline(
+            user_prompt, 
+            negative_prompt=negative_prompt, 
+            num_frames=88,
+            height=720,
+            width=1280,
+            num_inference_steps=num_sampling_steps,
             guidance_scale=guidance_scale,
-            num_sampling_steps=num_sampling_steps,
-            seed=seed,
-            enable_cpu_offload=enable_cpu_offload
-        )
+            max_sequence_length=512,
+            output_type="np",  # Ensure consistent numpy output for interpolator
+            generator=torch.Generator(device=device).manual_seed(seed)
+        ).video[0]
+
+        # Create output directory
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
-        # Save prompt info alongside the video
-        if result_path:
+        # Parse the FPS from the radio button choice if needed
+        fps = int(target_fps.split()[0]) if isinstance(target_fps, str) else int(target_fps)
+        
+        # If no interpolation needed, save and return original
+        if fps <= 15:
+            msg = "Saving video at original 15 FPS..."
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            
+            imageio.mimwrite(output_path, out_video, fps=15, quality=VIDEO_QUALITY)
+            
+            # Save prompt info
             save_prompt_info(
-                result_path,
+                output_path,
                 user_prompt,
                 negative_prompt,
                 guidance_scale,
@@ -175,11 +242,84 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
                 seed
             )
             
-        return result_path
-    
+            msg = "✨ Generation complete!"
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            return output_path, console_text
+            
+        # Proceed with interpolation for higher FPS
+        msg = f"Starting interpolation process for {fps} FPS..."
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        
+        interpolator = VideoInterpolator()
+        interpolated_frames = interpolator.process_video(out_video, target_fps=fps)
+        
+        if isinstance(interpolated_frames, (list, np.ndarray)) and len(interpolated_frames) > 0:
+            interpolated_path = output_path.replace('.mp4', f'_{fps}fps.mp4')
+            msg = f"Saving interpolated video at {fps} FPS..."
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            
+            imageio.mimwrite(interpolated_path, interpolated_frames, fps=fps, quality=VIDEO_QUALITY)
+            
+            # Save prompt info for interpolated version
+            save_prompt_info(
+                interpolated_path,
+                user_prompt,
+                negative_prompt,
+                guidance_scale,
+                num_sampling_steps,
+                seed,
+                target_fps=fps
+            )
+            
+            msg = "✨ Generation and interpolation complete!"
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            return interpolated_path, console_text
+        else:
+            # Fallback to original if interpolation fails
+            msg = "Interpolation failed, saving original video..."
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            
+            imageio.mimwrite(output_path, out_video, fps=15, quality=VIDEO_QUALITY)
+            
+            # Save prompt info for original
+            save_prompt_info(
+                output_path,
+                user_prompt,
+                negative_prompt,
+                guidance_scale,
+                num_sampling_steps,
+                seed
+            )
+            
+            msg = "✨ Generation complete (fell back to original FPS)"
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            return output_path, console_text
+
     except Exception as e:
-        print(f"Error during generation: {str(e)}")
-        return None
+        msg = f"Error during generation: {str(e)}"
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        return None, console_text
+        
+    finally:
+        try:
+            # Cleanup section - runs even if there's an error
+            del vae
+            del text_encoder
+            del transformer
+            del allegro_pipeline
+            torch.cuda.empty_cache()
+            gc.collect()
+        except Exception as e:
+            msg = f"Cleanup warning (non-critical): {str(e)}"
+            print(msg)
+            console_text = log_to_console(msg, console_text)
      
      
 def randomize_seed():
@@ -228,7 +368,8 @@ def generate_output_path(user_prompt):
     return f"{save_path}/alle_{timestamp}.mp4"  
 
 
-def save_prompt_info(video_path, user_prompt, negative_prompt, guidance_scale, steps, seed):
+# add save_prompt_info to txt file saved to outputs folder
+def save_prompt_info(video_path, user_prompt, negative_prompt, guidance_scale, steps, seed, test_mode=False):
     info_path = video_path.replace('.mp4', '_info.txt')
     with open(info_path, 'w') as f:
         f.write(f"Prompt: {user_prompt}\n")
@@ -236,6 +377,7 @@ def save_prompt_info(video_path, user_prompt, negative_prompt, guidance_scale, s
         f.write(f"Guidance Scale: {guidance_scale}\n")
         f.write(f"Steps: {steps}\n")
         f.write(f"Seed: {seed}\n")
+        f.write(f"Test Mode: {'Yes' if test_mode else 'No'}\n")
         f.write(f"Generated: {datetime.now().strftime('%y%m%d_%H%M')}\n")
 
 
@@ -265,14 +407,426 @@ def update_info_display(display_type):
     else:
         return get_system_info()
         
+        
+        
+class VideoInterpolator:
+    def __init__(self):
+        self.model = None
+        self.model_dir = Path("model_rife")
+        self.model_file = self.model_dir / "flownet.pkl"
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.console_text = ""  # Initialize empty console text
+        
+    def log(self, msg):
+        """Helper method for logging"""
+        print(msg)
+        self.console_text = log_to_console(msg, self.console_text)
+        
+    def check_model_exists(self):
+        """Check if the model files already exist"""
+        return self.model_file.exists()
+        
+    def download_model(self):
+        """Download the model files if they don't exist"""
+        try:
+            self.log("Downloading RIFE model from HuggingFace...")
+            snapshot_download(
+                repo_id="AlexWortega/RIFE",
+                local_dir=str(self.model_dir)
+            )
+            if self.check_model_exists():
+                self.log(f"✔️ Model downloaded successfully to: {self.model_dir}")
+                return True
+            else:
+                self.log("❌ Model download completed but model file not found")
+                return False
+        except Exception as e:
+            self.log(f"❌ Download failed: {str(e)}")
+            return False
     
+    def load_model(self):
+        """Lazy loading of RIFE model with smart download management"""
+        if self.model is None:
+            try:
+                self.log("Loading RIFE interpolation model...")
+                
+                if not self.check_model_exists():
+                    if not self.download_model():
+                        return False
+                else:
+                    self.log("Using cached RIFE model")
+                
+                try:
+                    self.log(f"Initializing RIFE model from {self.model_dir}")
+                    self.model = EnhancedRIFEModel()
+                    self.model.load_model(str(self.model_dir), -1)
+                    self.model.eval()
+                    self.log(f"✨ RIFE model loaded successfully on {self.device}!")
+                    return True
+                except Exception as e:
+                    self.log(f"❌ Model loading failed: {str(e)}")
+                    return False
+                    
+            except Exception as e:
+                self.log(f"❌ Failed to load RIFE model: {str(e)}")
+                return False
+        return True
+
+    def interpolate_frames(self, frame1, frame2, target_fps=30, original_fps=15):
+        """Generate intermediate frames between two frames based on FPS ratio"""
+        if not self.load_model():
+            return []
+            
+        frames = []
+        try:
+            # Calculate how many frames we need between these two frames
+            # For example: 15->30 fps needs 1 frame, 15->60 fps needs 3 frames
+            n_frames = (target_fps // original_fps) - 1
+            
+            self.log(f"Interpolating frame pair (generating {n_frames} intermediate frames)...")
+            
+            # Convert frames to tensors if needed
+            if not isinstance(frame1, torch.Tensor):
+                frame1 = to_tensor(frame1).unsqueeze(0)
+            if not isinstance(frame2, torch.Tensor):
+                frame2 = to_tensor(frame2).unsqueeze(0)
+                
+            with torch.no_grad():
+                if n_frames == 1:
+                    # Simple case: just one intermediate frame
+                    middle = self.model.inference(frame1, frame2, scale=1.0)
+                    middle = middle.cpu()
+                    frames = [to_pil_image(middle[0])]
+                elif n_frames > 1:
+                    # For higher frame rates, we need multiple intermediate frames
+                    # First get the middle frame
+                    middle = self.model.inference(frame1, frame2, scale=1.0)
+                    middle = middle.cpu()
+                    
+                    # If we need more frames, interpolate between original and middle,
+                    # and between middle and end
+                    if n_frames == 3:  # 15->60 fps case
+                        # Get frame between start and middle
+                        first_quarter = self.model.inference(frame1, middle, scale=1.0)
+                        # Get frame between middle and end
+                        third_quarter = self.model.inference(middle, frame2, scale=1.0)
+                        
+                        frames = [
+                            to_pil_image(first_quarter[0].cpu()),
+                            to_pil_image(middle[0]),
+                            to_pil_image(third_quarter[0].cpu())
+                        ]
+                
+        except Exception as e:
+            self.log(f"❌ Error during frame interpolation: {str(e)}")  
+            return []
+            
+        return frames
+        
+    def process_video(self, video_frames, target_fps=30):
+        """Process entire video with RIFE interpolation"""
+        original_fps = 15  # Base FPS for generated videos
+        
+        self.log(f"Received video frames type: {type(video_frames)}")
+        self.log(f"Shape/size of input: {video_frames.shape if hasattr(video_frames, 'shape') else len(video_frames)}")
+        
+        # Convert tensor to numpy if needed
+        if isinstance(video_frames, torch.Tensor):
+            self.log("Converting tensor to numpy array...")
+            video_frames = video_frames.cpu().numpy()
+            self.log(f"Converted shape: {video_frames.shape}")
+        
+        # Validate input
+        if not isinstance(video_frames, (list, np.ndarray)):
+            self.log(f"❌ Unexpected frame type after conversion: {type(video_frames)}")
+            return video_frames
+        if isinstance(video_frames, np.ndarray) and video_frames.size == 0:
+            self.log("❌ Empty array received")
+            return video_frames
+        if len(video_frames) < 2:
+            self.log(f"❌ Not enough frames: {len(video_frames)}")
+            return video_frames
+            
+        if target_fps <= original_fps:
+            self.log("No interpolation needed")
+            return video_frames
+            
+        self.log(f"Starting RIFE interpolation:")
+        self.log(f"• Input frames: {len(video_frames)}")
+        self.log(f"• Original FPS: {original_fps}")
+        self.log(f"• Target FPS: {target_fps}")
+        
+        # Calculate expected output frame count to maintain duration
+        original_duration = len(video_frames) / original_fps
+        expected_total_frames = int(original_duration * target_fps)
+        
+        self.log(f"• Original duration: {original_duration:.2f}s")
+        self.log(f"• Expected output frames: {expected_total_frames}")
+            
+        total_frames = len(video_frames)
+        result_frames = []
+        
+        try:
+            for i in range(len(video_frames) - 1):
+                self.log(f"Processing frame pair {i+1}/{total_frames-1}")
+                
+                # Add original frame
+                result_frames.append(video_frames[i])
+                
+                # Get interpolated frames
+                interp_frames = self.interpolate_frames(
+                    video_frames[i],
+                    video_frames[i + 1],
+                    target_fps=target_fps,
+                    original_fps=original_fps
+                )
+                
+                if isinstance(interp_frames, (list, np.ndarray)) and len(interp_frames) > 0:
+                    result_frames.extend(interp_frames)
+                else:
+                    self.log("❌ Interpolation failed, returning original video")
+                    return video_frames
+            
+            # Add final frame
+            result_frames.append(video_frames[-1])
+            
+            # Verify frame count matches expected
+            if len(result_frames) != expected_total_frames:
+                self.log(f"⚠️ Frame count mismatch. Expected: {expected_total_frames}, Got: {len(result_frames)}")
+                # Adjust if necessary by trimming or duplicating last frame
+                if len(result_frames) > expected_total_frames:
+                    result_frames = result_frames[:expected_total_frames]
+                else:
+                    while len(result_frames) < expected_total_frames:
+                        result_frames.append(result_frames[-1])
+                        
+            self.log(f"✨ Interpolation complete! Generated {len(result_frames)} total frames")
+            
+        except Exception as e:
+            self.log(f"❌ Error during video processing: {str(e)}")
+            return video_frames
+            
+        return result_frames
+
+
+def log_to_console(msg, console_text):
+    """Add new message to console text with timestamp"""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    updated = f"{console_text}\n[{timestamp}] {msg}" if console_text else f"[{timestamp}] {msg}"
+    return updated.strip()
+    
+    
+## Test Zone!
+
+def test_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_steps, seed, enable_cpu_offload, target_fps):
+    console_text = ""  # Initialize empty console text
+    output_path = generate_output_path(user_prompt)
+    dtype = torch.float16 
+    try:
+        msg = "Starting test inference..."
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        # Load models same as normal
+        vae = AllegroAutoencoderKL3D.from_pretrained(
+            "./allegro_weights/vae/", 
+            torch_dtype=torch.float32
+        ).to(device)
+        vae.eval()
+
+        text_encoder = T5EncoderModel.from_pretrained(
+            "./allegro_weights/text_encoder/", 
+            torch_dtype=dtype
+        ).to(device)
+        text_encoder.eval()
+
+        tokenizer = T5Tokenizer.from_pretrained("./allegro_weights/tokenizer/")
+        scheduler = EulerAncestralDiscreteScheduler()
+        transformer = AllegroTransformer3DModel.from_pretrained(
+            "./allegro_weights/transformer/", 
+            torch_dtype=dtype
+        ).to(device)
+        transformer.eval()
+
+        allegro_pipeline = AllegroPipeline(
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            scheduler=scheduler,
+            transformer=transformer
+        ).to(device)
+
+        if enable_cpu_offload:
+            allegro_pipeline.enable_sequential_cpu_offload()
+
+        torch.cuda.empty_cache()
+
+        # Super quick test settings
+        out_video = allegro_pipeline(
+            user_prompt, 
+            negative_prompt=negative_prompt, 
+            num_frames=8,        # Minimum frames
+            height=256,          # Smaller
+            width=512,           # Smaller
+            num_inference_steps=8,   # Faster
+            guidance_scale=guidance_scale,
+            max_sequence_length=512,
+            output_type="np",
+            generator=torch.Generator(device=device).manual_seed(int(seed))
+        ).video[0]
+        
+        # Parse the FPS from the radio button choice
+        fps = int(target_fps.split()[0])  # Converts "30 FPS" to 30
+        
+        # Save paths
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        test_path = output_path.replace('.mp4', '_test.mp4')
+        
+        # If we don't need interpolation, save and return original
+        if fps <= 15:
+            msg = "Saving test video at original FPS..."
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            imageio.mimwrite(test_path, out_video, fps=15, quality=VIDEO_QUALITY)
+            return test_path, console_text
+            
+        # Only proceed with interpolation if fps > 15
+        msg = f"Starting interpolation process for {fps}fps..."
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        interpolator = VideoInterpolator()
+        interpolated_frames = interpolator.process_video(out_video, target_fps=fps)
+        
+        if isinstance(interpolated_frames, (list, np.ndarray)) and len(interpolated_frames) > 0:
+            test_path_interp = output_path.replace('.mp4', f'_test_{fps}fps.mp4')
+            msg = f"\nSaving interpolated video at {fps}fps..."
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            imageio.mimwrite(test_path_interp, interpolated_frames, fps=fps, quality=VIDEO_QUALITY)
+            msg = "Interpolation complete!"
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            return test_path_interp, console_text
+        else:
+            # Fallback to original if interpolation fails
+            msg = "\nInterpolation failed, saving original video..."
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            imageio.mimwrite(test_path, out_video, fps=15, quality=VIDEO_QUALITY)
+            return test_path, console_text
+
+    except Exception as e:
+        msg = f"Error in test_inference: {str(e)}"
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        return None, console_text
+    finally:
+        try:
+            del vae
+            del text_encoder
+            del transformer
+            del allegro_pipeline
+            torch.cuda.empty_cache()
+            gc.collect()
+        except Exception as e:
+            print(f"Cleanup warning (non-critical): {str(e)}")
+
+
+def process_existing_video(video_path, target_fps, progress=gr.Progress(track_tqdm=True)):
+    """Process an existing video file with RIFE interpolation"""
+    console_text = ""  # Initialize empty console text
+    
+    msg = f"Loading video: {video_path}"
+    print(msg)
+    console_text = log_to_console(msg, console_text)
+        
+    try:
+        # Load the video
+        video_frames = imageio.mimread(video_path, memtest=False)
+        if not video_frames:
+            msg = "Error: Could not load video frames"
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            return None, console_text
+            
+        # Get original video info
+        reader = imageio.get_reader(video_path)
+        original_fps = reader.get_meta_data()['fps']
+        duration = len(video_frames) / original_fps  # Calculate original duration in seconds
+        reader.close()
+        
+        # Parse target FPS
+        if isinstance(target_fps, str):
+            fps = int(target_fps.split()[0])
+        else:
+            fps = int(target_fps)
+            
+        # Skip if no interpolation needed
+        if fps <= original_fps:
+            msg = f"Target FPS ({fps}) is not higher than original FPS ({original_fps})"
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            return video_path, console_text
+            
+        # Process the video
+        msg = f"Starting interpolation: {original_fps}fps → {fps}fps"
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        
+        interpolator = VideoInterpolator()
+        interpolated_frames = interpolator.process_video(video_frames, target_fps=fps)
+        
+        if not isinstance(interpolated_frames, (list, np.ndarray)) or len(interpolated_frames) == 0:
+            msg = "Error: Interpolation failed"
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            return video_path, console_text
+            
+        # Calculate expected frame count to maintain original duration
+        expected_frame_count = int(duration * fps)
+        
+        # Adjust frame sequence if necessary
+        if len(interpolated_frames) > expected_frame_count:
+            msg = f"Adjusting frame count to maintain original duration..."
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            # Take only the frames needed to maintain original duration
+            interpolated_frames = interpolated_frames[:expected_frame_count]
+        
+        # Create interpolated directory if it doesn't exist
+        os.makedirs(INTERPOLATED_PATH, exist_ok=True)
+        
+        # Generate output path in interpolated folder
+        filename = os.path.basename(video_path)
+        name, ext = os.path.splitext(filename)
+        output_path = os.path.join(INTERPOLATED_PATH, f"{name}_{fps}fps{ext}")
+        
+        # Save the interpolated video
+        msg = f"Saving interpolated video to: {output_path}"
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        
+        imageio.mimwrite(output_path, interpolated_frames, fps=fps, quality=VIDEO_QUALITY)
+        
+        msg = f"✨ Interpolation complete! Original duration: {duration:.2f}s, New frame count: {len(interpolated_frames)}"
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        return output_path, console_text
+        
+    except Exception as e:
+        msg = f"Error processing video: {str(e)}"
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        return None, console_text
+
+        
 def get_welcome_message():
     return """Welcome to Allegro Text-to-Video!
-    
+
 🎬 What to expect:
 • Generation takes about 1 hour per video (on a 3090)
 • Output will be 720p at 15fps
 • Each video is ~88 frames long
+• The initial load time can be quite lengthly, as it (down)loads the massive TE (20GB) from HD to RAM
 
 ⚙️ Important Settings:
 • "Enable CPU Offload" is ON by default - recommended for most users
@@ -297,11 +851,12 @@ title = """<style>.allegro-banner{background:linear-gradient(to bottom,#162828,#
 
 # Create Gradio interface
 with gr.Blocks() as demo:
-    gr.HTML(title)
+    #gr.HTML(title)
     with gr.Row():
         video_output = gr.Video(label="Generated Video")
     with gr.Row():
         submit_btn = gr.Button("Generate Video", variant="primary")
+        
     with gr.Row():        
         with gr.Column():
             user_prompt = gr.Textbox(
@@ -314,13 +869,37 @@ with gr.Blocks() as demo:
                 guidance_scale = gr.Slider(minimum=0, maximum=20, step=0.1, 
                                        label="Guidance Scale", value=7.5)
                 num_sampling_steps = gr.Slider(minimum=10, maximum=100, step=1, 
-                                           label="Number of Sampling Steps", value=20)    
+                                           label="Number of Sampling Steps", info="+quality ++inference time",value=20)    
                 
             with gr.Row():
                 seed = gr.Slider(minimum=0, maximum=10000, step=1, label="Seed", value=42, scale=3)
-                random_seed = gr.Button("🎲", scale=1)
+                random_seed = gr.Button("🎲 randomize seed", scale=1)
+                
             with gr.Row():
-                enable_cpu_offload = gr.Checkbox(label="Enable CPU Offload", value=True, scale=1)
+                enable_cpu_offload = gr.Checkbox(label="Enable CPU Offload", info="Don't touch unless certain!", value=True)
+                target_fps = gr.Radio(
+                    choices=["15 FPS (Original)", "30 FPS", "60 FPS"],
+                    value="15 FPS (Original)",
+                    label="Interpolation Options",
+                )
+
+            # Dev tools in accordion
+            with gr.Accordion("Development & WIP Tools", open=False):
+                with gr.Row():
+                    test_btn = gr.Button("🧪 Two Minute Test Generation", variant="primary")
+                gr.HTML('<hr style="margin: 20px 0; border: none; border-top: 1px solid rgba(128, 128, 128, 0.2);">')
+                with gr.Row():
+                    input_video = gr.Video(label="Upload Video for Interpolation")
+                    output_processed = gr.Video(label="Processed Video")
+
+                with gr.Row():
+                    process_fps = gr.Radio(
+                        choices=["30 FPS", "60 FPS"],
+                        value="30 FPS",
+                        label="Target FPS",
+                        info="wip. no audio. designed for manual interpolation of previously generated video."
+                    )
+                    process_btn = gr.Button("Process Video Interpolation", variant="primary")
                     
         with gr.Column():    
             negative_prompt = gr.Textbox(
@@ -330,16 +909,17 @@ with gr.Blocks() as demo:
                 lines=2
             )
                
-            # Info display section with radio toggle
+            # Information display section
             with gr.Row():
                 info_type = gr.Radio(
-                    choices=["welcome", "system"],
+                    choices=["welcome", "monitor"],
                     value="welcome",
                     label="Information Display",
                     interactive=True
                 )
                 open_folder_btn = gr.Button("📁 Open Output Folder")
             
+            # Welcome & monitor Info
             with gr.Row():
                 status_info = gr.Textbox(
                     label="Status",
@@ -347,15 +927,25 @@ with gr.Blocks() as demo:
                     interactive=False,
                     value=get_welcome_message()
                 )
-
+            
+            # System Messages Console
+            with gr.Row():
+                console_out = gr.TextArea(
+                    label="System Messages",
+                    lines=8,
+                    interactive=False,
+                    autoscroll=True,
+                    show_copy_button=True
+                )
+        
     # Event handlers
     
     random_seed.click(fn=randomize_seed, outputs=seed)
     
-    # Timer that updates system info if system view is selected
+    # Timer that updates system info if monitor view is selected
     timer = gr.Timer(value=2)
     timer.tick(
-        fn=lambda display_type: get_system_info() if display_type == "system" else status_info.value,
+        fn=lambda display_type: get_system_info() if display_type == "monitor" else status_info.value,
         inputs=[info_type],
         outputs=status_info
     )
@@ -369,16 +959,42 @@ with gr.Blocks() as demo:
     open_folder_btn.click(
         fn=open_output_folder,
         inputs=None,
-        outputs=status_info
+        outputs=console_out
     )
     
     submit_btn.click(
         fn=run_inference,
-        inputs=[user_prompt, negative_prompt, guidance_scale, 
-                num_sampling_steps, seed, enable_cpu_offload],
-        outputs=video_output,
+        inputs=[
+            user_prompt, 
+            negative_prompt, 
+            guidance_scale, 
+            num_sampling_steps, 
+            seed, 
+            enable_cpu_offload,
+            target_fps
+        ],
+        outputs=[video_output, console_out],
         show_progress=True
     )
 
+    test_btn.click(
+        fn=test_inference,
+        inputs=[
+            user_prompt, 
+            negative_prompt, 
+            guidance_scale, 
+            num_sampling_steps, 
+            seed, 
+            enable_cpu_offload, 
+            target_fps 
+        ],
+        outputs=[video_output, console_out]
+    )
+    # manual interpolation
+    process_btn.click(
+        fn=process_existing_video,
+        inputs=[input_video, process_fps],  
+        outputs=[output_processed, console_out]
+    )
 # Launch the interface
 demo.launch(share=False)
