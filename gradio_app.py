@@ -118,7 +118,8 @@ def single_inference(user_prompt, negative_prompt, save_path, guidance_scale, nu
             allegro_pipeline.enable_sequential_cpu_offload()
 
         # Clear any existing cache before generation
-        torch.cuda.empty_cache()
+        devicetorch.empty_cache(torch)
+#        torch.cuda.empty_cache()
 
         out_video = allegro_pipeline(
             user_prompt, 
@@ -148,7 +149,8 @@ def single_inference(user_prompt, negative_prompt, save_path, guidance_scale, nu
             del allegro_pipeline
             
             # Clear CUDA cache
-            torch.cuda.empty_cache()
+            devicetorch.empty_cache(torch)
+            #torch.cuda.empty_cache()
             
             # Force garbage collection
             gc.collect()
@@ -199,7 +201,8 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
         if enable_cpu_offload:
             allegro_pipeline.enable_sequential_cpu_offload()
 
-        torch.cuda.empty_cache()
+        #torch.cuda.empty_cache()
+        devicetorch.empty_cache(torch)
 
         msg = "Loading complete. Starting pipeline..."
         print(msg)
@@ -314,7 +317,8 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
             del text_encoder
             del transformer
             del allegro_pipeline
-            torch.cuda.empty_cache()
+            #torch.cuda.empty_cache()
+            devicetorch.empty_cache(torch)
             gc.collect()
         except Exception as e:
             msg = f"Cleanup warning (non-critical): {str(e)}"
@@ -415,7 +419,8 @@ class VideoInterpolator:
         self.model = None
         self.model_dir = Path("model_rife")
         self.model_file = self.model_dir / "flownet.pkl"
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = devicetorch.get(torch)
         self.console_text = ""  # Initialize empty console text
         
     def log(self, msg):
@@ -659,7 +664,8 @@ def test_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_st
         if enable_cpu_offload:
             allegro_pipeline.enable_sequential_cpu_offload()
 
-        torch.cuda.empty_cache()
+        #torch.cuda.empty_cache()
+        devicetorch.empty_cache(torch)
 
         # Super quick test settings
         out_video = allegro_pipeline(
@@ -726,7 +732,8 @@ def test_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_st
             del text_encoder
             del transformer
             del allegro_pipeline
-            torch.cuda.empty_cache()
+            #torch.cuda.empty_cache()
+            devicetorch.empty_cache(torch)
             gc.collect()
         except Exception as e:
             print(f"Cleanup warning (non-critical): {str(e)}")
