@@ -9,9 +9,8 @@ A Pinokio Install Script for the [Rhymes Allegro](https://github.com/rhymes-ai/A
 
 ## Important Notes
 * Can take over an hour to generate a result. Hopefully will be optimized soon. But yeah, 1 hour on a 3090.  4090 ~30 minutes. 
-* Could be technically runnable on AMD and Mac, but might take 10x longer... 
 * My GPU warms me at night. 
-* 12GB VRAM should be sufficient to run, although it does briefly spike high in a couple of places, so make sure you haven't disabled SYSMEM fallback. 
+* 12GB VRAM may be sufficient to run, although it does briefly spike high in a couple of places, so make sure you haven't disabled SYSMEM fallback. 
 * After the inference Steps have completed, there's a vae decode phase that can take quite a while. So don't panic and stop it prematurely!
 
 
