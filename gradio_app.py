@@ -450,7 +450,6 @@ class VideoInterpolator:
             try:
                 self.log("Loading RIFE interpolation model...")
                 
-                # Check if model exists, download if needed
                 if not self.check_model_exists():
                     if not self.download_model():
                         return False
@@ -473,14 +472,18 @@ class VideoInterpolator:
                 return False
         return True
 
-    def interpolate_frames(self, frame1, frame2, multiplier=2):
-        """Generate intermediate frames between two frames"""
+    def interpolate_frames(self, frame1, frame2, target_fps=30, original_fps=15):
+        """Generate intermediate frames between two frames based on FPS ratio"""
         if not self.load_model():
             return []
             
         frames = []
         try:
-            self.log(f"Interpolating frame pair ({multiplier-1} new frames)...")
+            # Calculate how many frames we need between these two frames
+            # For example: 15->30 fps needs 1 frame, 15->60 fps needs 3 frames
+            n_frames = (target_fps // original_fps) - 1
+            
+            self.log(f"Interpolating frame pair (generating {n_frames} intermediate frames)...")
             
             # Convert frames to tensors if needed
             if not isinstance(frame1, torch.Tensor):
@@ -489,9 +492,30 @@ class VideoInterpolator:
                 frame2 = to_tensor(frame2).unsqueeze(0)
                 
             with torch.no_grad():
-                middle = self.model.inference(frame1, frame2, scale=1.0)
-                middle = middle.cpu()  # Move back to CPU for PIL conversion
-                frames = [to_pil_image(middle[0])]
+                if n_frames == 1:
+                    # Simple case: just one intermediate frame
+                    middle = self.model.inference(frame1, frame2, scale=1.0)
+                    middle = middle.cpu()
+                    frames = [to_pil_image(middle[0])]
+                elif n_frames > 1:
+                    # For higher frame rates, we need multiple intermediate frames
+                    # First get the middle frame
+                    middle = self.model.inference(frame1, frame2, scale=1.0)
+                    middle = middle.cpu()
+                    
+                    # If we need more frames, interpolate between original and middle,
+                    # and between middle and end
+                    if n_frames == 3:  # 15->60 fps case
+                        # Get frame between start and middle
+                        first_quarter = self.model.inference(frame1, middle, scale=1.0)
+                        # Get frame between middle and end
+                        third_quarter = self.model.inference(middle, frame2, scale=1.0)
+                        
+                        frames = [
+                            to_pil_image(first_quarter[0].cpu()),
+                            to_pil_image(middle[0]),
+                            to_pil_image(third_quarter[0].cpu())
+                        ]
                 
         except Exception as e:
             self.log(f"❌ Error during frame interpolation: {str(e)}")  
@@ -501,6 +525,8 @@ class VideoInterpolator:
         
     def process_video(self, video_frames, target_fps=30):
         """Process entire video with RIFE interpolation"""
+        original_fps = 15  # Base FPS for generated videos
+        
         self.log(f"Received video frames type: {type(video_frames)}")
         self.log(f"Shape/size of input: {video_frames.shape if hasattr(video_frames, 'shape') else len(video_frames)}")
         
@@ -520,11 +546,8 @@ class VideoInterpolator:
         if len(video_frames) < 2:
             self.log(f"❌ Not enough frames: {len(video_frames)}")
             return video_frames
-                
-        original_fps = 15
-        multiplier = max(1, target_fps // original_fps)
-        
-        if multiplier == 1:
+            
+        if target_fps <= original_fps:
             self.log("No interpolation needed")
             return video_frames
             
@@ -532,21 +555,32 @@ class VideoInterpolator:
         self.log(f"• Input frames: {len(video_frames)}")
         self.log(f"• Original FPS: {original_fps}")
         self.log(f"• Target FPS: {target_fps}")
-        self.log(f"• Multiplier: {multiplier}")
+        
+        # Calculate expected output frame count to maintain duration
+        original_duration = len(video_frames) / original_fps
+        expected_total_frames = int(original_duration * target_fps)
+        
+        self.log(f"• Original duration: {original_duration:.2f}s")
+        self.log(f"• Expected output frames: {expected_total_frames}")
             
         total_frames = len(video_frames)
-        
         result_frames = []
         
         try:
             for i in range(len(video_frames) - 1):
                 self.log(f"Processing frame pair {i+1}/{total_frames-1}")
+                
+                # Add original frame
                 result_frames.append(video_frames[i])
+                
+                # Get interpolated frames
                 interp_frames = self.interpolate_frames(
                     video_frames[i],
                     video_frames[i + 1],
-                    multiplier
+                    target_fps=target_fps,
+                    original_fps=original_fps
                 )
+                
                 if isinstance(interp_frames, (list, np.ndarray)) and len(interp_frames) > 0:
                     result_frames.extend(interp_frames)
                 else:
@@ -555,6 +589,17 @@ class VideoInterpolator:
             
             # Add final frame
             result_frames.append(video_frames[-1])
+            
+            # Verify frame count matches expected
+            if len(result_frames) != expected_total_frames:
+                self.log(f"⚠️ Frame count mismatch. Expected: {expected_total_frames}, Got: {len(result_frames)}")
+                # Adjust if necessary by trimming or duplicating last frame
+                if len(result_frames) > expected_total_frames:
+                    result_frames = result_frames[:expected_total_frames]
+                else:
+                    while len(result_frames) < expected_total_frames:
+                        result_frames.append(result_frames[-1])
+                        
             self.log(f"✨ Interpolation complete! Generated {len(result_frames)} total frames")
             
         except Exception as e:
@@ -706,6 +751,7 @@ def process_existing_video(video_path, target_fps, progress=gr.Progress(track_tq
         # Get original video info
         reader = imageio.get_reader(video_path)
         original_fps = reader.get_meta_data()['fps']
+        duration = len(video_frames) / original_fps  # Calculate original duration in seconds
         reader.close()
         
         # Parse target FPS
@@ -726,7 +772,7 @@ def process_existing_video(video_path, target_fps, progress=gr.Progress(track_tq
         print(msg)
         console_text = log_to_console(msg, console_text)
         
-        interpolator = VideoInterpolator()  # No console needed anymore
+        interpolator = VideoInterpolator()
         interpolated_frames = interpolator.process_video(video_frames, target_fps=fps)
         
         if not isinstance(interpolated_frames, (list, np.ndarray)) or len(interpolated_frames) == 0:
@@ -735,6 +781,17 @@ def process_existing_video(video_path, target_fps, progress=gr.Progress(track_tq
             console_text = log_to_console(msg, console_text)
             return video_path, console_text
             
+        # Calculate expected frame count to maintain original duration
+        expected_frame_count = int(duration * fps)
+        
+        # Adjust frame sequence if necessary
+        if len(interpolated_frames) > expected_frame_count:
+            msg = f"Adjusting frame count to maintain original duration..."
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            # Take only the frames needed to maintain original duration
+            interpolated_frames = interpolated_frames[:expected_frame_count]
+        
         # Create interpolated directory if it doesn't exist
         os.makedirs(INTERPOLATED_PATH, exist_ok=True)
         
@@ -750,7 +807,7 @@ def process_existing_video(video_path, target_fps, progress=gr.Progress(track_tq
         
         imageio.mimwrite(output_path, interpolated_frames, fps=fps, quality=VIDEO_QUALITY)
         
-        msg = "✨ Interpolation complete!"
+        msg = f"✨ Interpolation complete! Original duration: {duration:.2f}s, New frame count: {len(interpolated_frames)}"
         print(msg)
         console_text = log_to_console(msg, console_text)
         return output_path, console_text
