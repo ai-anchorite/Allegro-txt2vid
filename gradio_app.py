@@ -739,6 +739,25 @@ def test_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_st
             print(f"Cleanup warning (non-critical): {str(e)}")
 
 
+def interpolate_frames(frame1, frame2, timestep):
+    """Helper function to interpolate between two frames using RIFE"""
+    if not hasattr(interpolate_frames, 'model'):
+        interpolate_frames.model = EnhancedRIFEModel()
+        interpolate_frames.model.load_model("model_rife", -1)
+        interpolate_frames.model.eval()
+    
+    # Convert frames to tensors if needed
+    if not isinstance(frame1, torch.Tensor):
+        frame1 = to_tensor(frame1).unsqueeze(0)
+    if not isinstance(frame2, torch.Tensor):
+        frame2 = to_tensor(frame2).unsqueeze(0)
+    
+    with torch.no_grad():
+        middle = interpolate_frames.model.inference(frame1, frame2, timestep=timestep)
+        middle = middle.cpu()
+        return to_pil_image(middle[0])
+        
+        
 def process_existing_video(video_path, target_fps, progress=gr.Progress(track_tqdm=True)):
     """Process an existing video file with RIFE interpolation"""
     console_text = ""
