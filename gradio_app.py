@@ -1,6 +1,7 @@
 # Standard library imports
 import os
 import gc
+import re  # added for filename cleaning
 import time
 import random
 import warnings
@@ -34,10 +35,14 @@ from allegro.models.transformers.transformer_3d_allegro import AllegroTransforme
 
 # Constants and configurations
 device = devicetorch.get(torch)
+
+SPEED_FACTOR_MIN = 0.25      # adjust the min-max values for the Video Speed adjustment slider
+SPEED_FACTOR_MAX = 2.0       #
+SPEED_FACTOR_STEP = 0.05     # granularity of speed control (0.05 = 5% steps)
+FPS = 15                     # best not to touch unless purposefully!
+VIDEO_QUALITY = 8            # imageio quality setting (0-10, higher is better)
 save_path = "output_videos"  # Can be changed to a preferred directory: "C:\path\to\save_folder"
 INTERPOLATED_PATH = os.path.join(save_path, "interpolated")
-FPS = 15
-VIDEO_QUALITY = 8  # imageio quality setting (0-10, higher is better)
 
 
 # Templates
@@ -368,7 +373,7 @@ def get_system_info():
 
 
 def generate_output_path(user_prompt):
-    timestamp = datetime.now().strftime("%y%m%d_%H%M")  
+    timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
     return f"{save_path}/alle_{timestamp}.mp4"  
 
 
@@ -412,8 +417,7 @@ def update_info_display(display_type):
     else:
         return get_system_info()
         
-        
-        
+
 class VideoInterpolator:
     def __init__(self):
         self.model = None
@@ -613,11 +617,11 @@ class VideoInterpolator:
             return video_frames
             
         return result_frames
-
+        
 
 def log_to_console(msg, console_text):
     """Add new message to console text with timestamp"""
-    timestamp = datetime.now().strftime("%H:%M:%S")
+    timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
     updated = f"{console_text}\n[{timestamp}] {msg}" if console_text else f"[{timestamp}] {msg}"
     return updated.strip()
     
@@ -738,6 +742,211 @@ def test_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_st
         except Exception as e:
             print(f"Cleanup warning (non-critical): {str(e)}")
 
+# Manual post-processing tools
+def process_existing_video(video_path, target_fps, speed_factor=1.0, progress=gr.Progress(track_tqdm=True)):
+    """Process an existing video file with RIFE interpolation and speed control
+    
+    Processing order:
+    1. Apply speed adjustment first (if any) - affects duration only
+    2. Apply frame interpolation second (if selected) - affects FPS only
+    """
+    console_text = ""
+    
+    msg = f"Loading video: {video_path}"
+    print(msg)
+    console_text = log_to_console(msg, console_text)
+        
+    try:
+        # Extract audio from source if it exists
+        audio_path = None
+        try:
+            temp_audio = video_path + '.temp.wav'
+            subprocess.run([
+                'ffmpeg', '-y', '-i', video_path, 
+                '-vn', '-acodec', 'pcm_s16le', 
+                '-ar', '44100', '-ac', '2',
+                temp_audio
+            ], capture_output=True)
+            if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 0:
+                audio_path = temp_audio
+                msg = "✓ Audio track extracted"
+                print(msg)
+                console_text = log_to_console(msg, console_text)
+        except Exception as e:
+            msg = f"Note: No audio track found or error extracting: {str(e)}"
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            
+        # Load the video
+        video_frames = imageio.mimread(video_path, memtest=False)
+        if not video_frames:
+            msg = "Error: Could not load video frames"
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            return None, console_text
+            
+        # Get original video info
+        reader = imageio.get_reader(video_path)
+        original_fps = reader.get_meta_data()['fps']
+        original_frame_count = len(video_frames)
+        duration = original_frame_count / original_fps
+        reader.close()
+        
+        # Parse multiplier from choice
+        multiplier_map = {"0x fps": 0, "2x fps": 2, "3x fps": 3, "4x fps": 4}
+        fps_multiplier = multiplier_map.get(target_fps, 0)
+        
+        msg = (f"Starting processing:\n"
+               f"• Input: {original_frame_count} frames @ {original_fps}fps ({duration:.2f}s)\n"
+               f"• Speed adjustment: {speed_factor:.2f}x\n"
+               f"• Frame interpolation: {fps_multiplier}x")
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        
+        # Step 1: Speed Adjustment - affects duration only
+        if speed_factor != 1.0:
+            msg = f"Applying speed adjustment ({speed_factor}x)..."
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            
+            if speed_factor > 1.0:
+                # Speed up: take fewer frames but keep original fps
+                step = speed_factor
+                indices = np.arange(0, len(video_frames), step)
+                video_frames = [video_frames[int(i)] for i in indices if int(i) < len(video_frames)]
+            else:
+                # Slow down: duplicate frames for smoother slow motion
+                new_frame_count = int(len(video_frames) / speed_factor)
+                indices = np.linspace(0, len(video_frames) - 1, new_frame_count)
+                video_frames = [video_frames[int(i)] for i in indices]
+            
+            # Speed adjustment doesn't change FPS
+            speed_adjusted_fps = original_fps
+            speed_adjusted_duration = len(video_frames) / speed_adjusted_fps
+            
+            msg = (f"• Speed adjustment complete: {len(video_frames)} frames @ {speed_adjusted_fps:.1f}fps\n"
+                  f"• New duration: {speed_adjusted_duration:.2f}s")
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+        else:
+            speed_adjusted_fps = original_fps
+            speed_adjusted_duration = duration
+            
+        # Step 2: Frame Interpolation - affects FPS only
+        if fps_multiplier > 0:
+            msg = f"Applying frame interpolation ({fps_multiplier}x)..."
+            print(msg)
+            console_text = log_to_console(msg, console_text)
+            
+            result_frames = []
+            for i in range(len(video_frames) - 1):
+                # Add original frame
+                result_frames.append(video_frames[i])
+                
+                # Generate intermediate frames
+                for j in range(fps_multiplier - 1):
+                    timestep = (j + 1) / fps_multiplier
+                    try:
+                        interpolated = interpolate_frames(
+                            video_frames[i], 
+                            video_frames[i + 1], 
+                            timestep
+                        )
+                        result_frames.append(interpolated)
+                    except Exception as e:
+                        msg = f"Warning: Frame interpolation failed at frame {i}: {str(e)}"
+                        print(msg)
+                        console_text = log_to_console(msg, console_text)
+                        continue
+                        
+            # Add final frame
+            result_frames.append(video_frames[-1])
+            final_fps = speed_adjusted_fps * fps_multiplier
+        else:
+            result_frames = video_frames
+            final_fps = speed_adjusted_fps
+            
+        # Convert frames if needed
+        if hasattr(result_frames[0], 'convert'):
+            result_frames = [np.array(frame.convert('RGB')) for frame in result_frames]
+        
+        # Create output path
+        os.makedirs(INTERPOLATED_PATH, exist_ok=True)
+        filename = os.path.basename(video_path)
+        name, _ = os.path.splitext(filename)
+        name = clean_filename(name)  # Remove timestamps but keep processing markers
+        
+        # Create descriptive filename
+        timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+        speed_text = f"_{speed_factor:.1f}x" if speed_factor != 1.0 else ""
+        fps_text = f"_{fps_multiplier}x" if fps_multiplier > 0 else ""
+        output_path = os.path.join(INTERPOLATED_PATH, f"{name}{speed_text}{fps_text}_{timestamp}.mp4")
+        
+        msg = f"Saving processed video to: {output_path}"
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        
+        # First save without audio
+        temp_video = output_path + '.temp.mp4'
+        imageio.mimwrite(temp_video, result_frames, fps=final_fps, quality=VIDEO_QUALITY)
+        
+        # If we have audio, combine it with the video
+        if audio_path:
+            try:
+                # Adjust audio speed to match video
+                speed_adjusted_audio = audio_path + '.speed.wav'
+                subprocess.run([
+                    'ffmpeg', '-y', '-i', audio_path,
+                    '-filter:a', f'atempo={speed_factor}',
+                    speed_adjusted_audio
+                ], capture_output=True)
+                
+                # Combine video and speed-adjusted audio
+                subprocess.run([
+                    'ffmpeg', '-y',
+                    '-i', temp_video,
+                    '-i', speed_adjusted_audio,
+                    '-c:v', 'copy', '-c:a', 'aac',
+                    output_path
+                ], capture_output=True)
+                
+                # Cleanup temp files
+                for f in [audio_path, speed_adjusted_audio, temp_video]:
+                    try:
+                        if f and os.path.exists(f):
+                            os.remove(f)
+                    except:
+                        pass
+                        
+                msg = "✓ Audio track processed and merged"
+                print(msg)
+                console_text = log_to_console(msg, console_text)
+                
+            except Exception as e:
+                msg = f"Warning: Audio processing failed: {str(e)}"
+                print(msg)
+                console_text = log_to_console(msg, console_text)
+                # Fallback to video without audio
+                os.rename(temp_video, output_path)
+        else:
+            # No audio to process, just rename the temp video
+            os.rename(temp_video, output_path)
+        
+        final_frame_count = len(result_frames)
+        final_duration = final_frame_count / final_fps
+        final_msg = (f"✨ Processing complete!\n"
+                    f"• Original: {original_frame_count} frames @ {original_fps}fps ({duration:.2f}s)\n"
+                    f"• Final: {final_frame_count} frames @ {final_fps:.1f}fps ({final_duration:.2f}s)")
+        print(final_msg)
+        console_text = log_to_console(final_msg, console_text)
+        return output_path, console_text
+        
+    except Exception as e:
+        msg = f"Error processing video: {str(e)}"
+        print(msg)
+        console_text = log_to_console(msg, console_text)
+        return None, console_text
+        
 
 def interpolate_frames(frame1, frame2, timestep):
     """Helper function to interpolate between two frames using RIFE"""
@@ -756,98 +965,64 @@ def interpolate_frames(frame1, frame2, timestep):
         middle = interpolate_frames.model.inference(frame1, frame2, timestep=timestep)
         middle = middle.cpu()
         return to_pil_image(middle[0])
-        
-        
-def process_existing_video(video_path, target_fps, progress=gr.Progress(track_tqdm=True)):
-    """Process an existing video file with RIFE interpolation"""
+     
+     
+def process_loop_video(video_path, loop_type="none", num_loops=2, progress=gr.Progress(track_tqdm=True)):
+    """Loop video forwards or ping-pong it back and forth"""
     console_text = ""
     
-    msg = f"Loading video: {video_path}"
+    msg = f"Processing video loop: {video_path}"
     print(msg)
     console_text = log_to_console(msg, console_text)
-        
+    
     try:
-        # Load the video
-        video_frames = imageio.mimread(video_path, memtest=False)
-        if not video_frames:
-            msg = "Error: Could not load video frames"
-            print(msg)
-            console_text = log_to_console(msg, console_text)
-            return None, console_text
-            
-        # Get original video info
-        reader = imageio.get_reader(video_path)
-        original_fps = reader.get_meta_data()['fps']
-        original_frame_count = len(video_frames)
-        duration = original_frame_count / original_fps
-        reader.close()
-        
-        # Parse multiplier from choice
-        multiplier_map = {
-            "2x fps": 2,
-            "3x fps": 3,
-            "4x fps": 4
-        }
-        fps_multiplier = multiplier_map.get(target_fps, 2)  # Default to 2x if unknown
-        target_fps = original_fps * fps_multiplier
-            
-        msg = (f"Starting interpolation:\n"
-               f"• Input: {original_frame_count} frames @ {original_fps}fps ({duration:.2f}s)\n"
-               f"• Multiplier: {fps_multiplier}x\n"
-               f"• Target: {original_frame_count * fps_multiplier:.0f} frames @ {target_fps:.1f}fps")
-        print(msg)
-        console_text = log_to_console(msg, console_text)
-        
-        # Process frames
-        result_frames = []
-        for i in range(len(video_frames) - 1):
-            # Add original frame
-            result_frames.append(video_frames[i])
-            
-            # Generate intermediate frames based on multiplier
-            for j in range(int(fps_multiplier - 1)):
-                timestep = (j + 1) / fps_multiplier
-                interpolated = interpolate_frames(
-                    video_frames[i], 
-                    video_frames[i + 1], 
-                    timestep
-                )
-                result_frames.append(interpolated)
-                
-        # Add final frame
-        result_frames.append(video_frames[-1])
-        
-        # Convert frames if needed
-        if hasattr(result_frames[0], 'convert'):
-            result_frames = [np.array(frame.convert('RGB')) for frame in result_frames]
-        
         # Create output path
-        os.makedirs(INTERPOLATED_PATH, exist_ok=True)
         filename = os.path.basename(video_path)
         name, ext = os.path.splitext(filename)
-        output_path = os.path.join(INTERPOLATED_PATH, f"{name}_{fps_multiplier}x{ext}")
+        timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+        output_path = os.path.join(INTERPOLATED_PATH, f"{name}_{loop_type}_{num_loops}x_{timestamp}.mp4")
         
-        # Save the interpolated video
-        msg = f"Saving interpolated video to: {output_path}"
+        if loop_type == "ping-pong":
+            # Create palindrome effect and repeat it
+            filter_complex = f"[0:v]reverse[r];[0:v][r]concat=n=2:v=1[v];[v]loop={num_loops-1}:32767:0[final]"
+            subprocess.run([
+                'ffmpeg', '-y',
+                '-i', video_path,
+                '-filter_complex', filter_complex,
+                '-map', '[final]',  # Use the looped output
+                '-c:v', 'libx264',
+                output_path
+            ], capture_output=True)
+        else:  # standard loop
+            subprocess.run([
+                'ffmpeg', '-y',
+                '-stream_loop', str(num_loops - 1),  # -1 because first play counts as 1
+                '-i', video_path,
+                '-c', 'copy',
+                output_path
+            ], capture_output=True)
+            
+        msg = f"✨ Loop processing complete: {output_path}"
         print(msg)
         console_text = log_to_console(msg, console_text)
-        
-        imageio.mimwrite(output_path, result_frames, fps=target_fps, quality=VIDEO_QUALITY)
-        
-        final_duration = len(result_frames) / target_fps
-        final_msg = (f"✨ Interpolation complete!\n"
-                    f"• Original: {original_frame_count} frames @ {original_fps}fps ({duration:.2f}s)\n"
-                    f"• Final: {len(result_frames)} frames @ {target_fps:.1f}fps ({final_duration:.2f}s)")
-        print(final_msg)
-        console_text = log_to_console(final_msg, console_text)
         return output_path, console_text
         
     except Exception as e:
-        msg = f"Error processing video: {str(e)}"
+        msg = f"Error creating loop: {str(e)}"
         print(msg)
         console_text = log_to_console(msg, console_text)
         return None, console_text
 
+
+# managing video naming over repeated runs       
+def clean_filename(filename):
+    """Remove only timestamp patterns from filename, preserve processing markers"""
+    filename = re.sub(r'_\d{6}_\d{6}', '', filename)  # Removes YYMMDD_HHMMSS
+    filename = re.sub(r'_\d{6}_\d{4}', '', filename)  # Removes YYMMDD_HHMM
+    return filename     
+        
+        
+        
         
 def get_welcome_message():
     return """Welcome to Allegro Text-to-Video!
@@ -914,23 +1089,54 @@ with gr.Blocks() as demo:
                 )
 
             # Dev tools in accordion
-            with gr.Accordion("Development & WIP Tools", open=False):
-                with gr.Row():
-                    test_btn = gr.Button("🧪 Two Minute Test Generation", variant="primary")
-                gr.HTML('<hr style="margin: 20px 0; border: none; border-top: 1px solid rgba(128, 128, 128, 0.2);">')
+            with gr.Accordion("Tool Box", open=False):        
                 with gr.Row():
                     input_video = gr.Video(label="Upload Video for Interpolation")
                     output_processed = gr.Video(label="Processed Video")
 
                 with gr.Row():
                     process_fps = gr.Radio(
-                        choices=["2x fps", "3x fps", "4x fps"],
-                        value="2x fps",
-                        label="Frame Multiplier",
-                        info="wip. no audio. designed for manual interpolation of previously generated video."
+                        choices=["0x fps", "2x fps", "3x fps", "4x fps"],
+                        value="0x fps",
+                        label="RIFE Frame Interpolation",
+                        info="Smooth motion by increasing fps"
+                    )
+                with gr.Row():                    
+                    speed_factor = gr.Slider(
+                        minimum=SPEED_FACTOR_MIN,
+                        maximum=SPEED_FACTOR_MAX,
+                        step=SPEED_FACTOR_STEP,
+                        value=1.0,
+                        label="Adjust Video Speed",
+                        info="Slow-mo (0.25x) to speed-up (2x)"
                     )
                 with gr.Row():    
                     process_btn = gr.Button("Process Video Interpolation", variant="primary")
+                gr.HTML('<hr style="margin: 20px 0; border: none; border-top: 1px solid rgba(128, 128, 128, 0.2);">') 
+                
+                with gr.Accordion("🔄 Video Loop ~ WIP ~ Feature Creep is Real", open=False):        
+                    with gr.Row():
+                        loop_type = gr.Radio(
+                            choices=["none", "loop", "ping-pong"],
+                            value="none",
+                            label="Loop Type",
+                            info="Loop or ping-pong the video"
+                        )
+                        num_loops = gr.Slider(
+                            minimum=1,
+                            maximum=5,
+                            step=1,
+                            value=2,
+                            label="Number of Loops"
+                        )
+                    with gr.Row():
+                        loop_btn = gr.Button("🔄 Create Loop", variant="primary")
+                        
+                gr.HTML('<hr style="margin: 20px 0; border: none; border-top: 1px solid rgba(128, 128, 128, 0.2);">')            
+            with gr.Accordion("Dev Tools", open=False):
+                with gr.Row():
+                    test_btn = gr.Button("🧪 Two Minute Test Generation", variant="primary")
+                  
                     
         with gr.Column():    
             negative_prompt = gr.Textbox(
@@ -968,7 +1174,8 @@ with gr.Blocks() as demo:
                     autoscroll=True,
                     show_copy_button=True
                 )
-        
+
+
     # Event handlers
     
     random_seed.click(fn=randomize_seed, outputs=seed)
@@ -1024,7 +1231,23 @@ with gr.Blocks() as demo:
     # manual interpolation
     process_btn.click(
         fn=process_existing_video,
-        inputs=[input_video, process_fps],  
+        inputs=[input_video, process_fps, speed_factor],  
+        outputs=[output_processed, console_out]
+    )
+    
+    def reset_processing_controls():
+        return "0x fps", 1.0  # Default values for process_fps and speed_factor
+
+    # reset post-processing controls
+    input_video.change(
+        fn=reset_processing_controls,
+        inputs=None,
+        outputs=[process_fps, speed_factor]
+    )
+    # loop functions
+    loop_btn.click(
+        fn=process_loop_video,
+        inputs=[input_video, loop_type, num_loops],
         outputs=[output_processed, console_out]
     )
 # Launch the interface
