@@ -373,7 +373,7 @@ def get_system_info():
 
 
 def generate_output_path(user_prompt):
-    timestamp = datetime.now().strftime("%y%m%d_%H%M")  
+    timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
     return f"{save_path}/alle_{timestamp}.mp4"  
 
 
@@ -621,7 +621,7 @@ class VideoInterpolator:
 
 def log_to_console(msg, console_text):
     """Add new message to console text with timestamp"""
-    timestamp = datetime.now().strftime("%H:%M:%S")
+    timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
     updated = f"{console_text}\n[{timestamp}] {msg}" if console_text else f"[{timestamp}] {msg}"
     return updated.strip()
     
@@ -877,7 +877,7 @@ def process_existing_video(video_path, target_fps, speed_factor=1.0, progress=gr
         name = clean_filename(name)  # Remove timestamps but keep processing markers
         
         # Create descriptive filename
-        timestamp = datetime.now().strftime("%y%m%d_%H%M")
+        timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
         speed_text = f"_{speed_factor:.1f}x" if speed_factor != 1.0 else ""
         fps_text = f"_{fps_multiplier}x" if fps_multiplier > 0 else ""
         output_path = os.path.join(INTERPOLATED_PATH, f"{name}{speed_text}{fps_text}_{timestamp}.mp4")
@@ -979,7 +979,7 @@ def process_loop_video(video_path, loop_type="none", num_loops=2, progress=gr.Pr
         # Create output path
         filename = os.path.basename(video_path)
         name, ext = os.path.splitext(filename)
-        timestamp = datetime.now().strftime("%y%m%d_%H%M")
+        timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
         output_path = os.path.join(INTERPOLATED_PATH, f"{name}_{loop_type}_{num_loops}x_{timestamp}.mp4")
         
         if loop_type == "ping-pong":
@@ -1017,9 +1017,9 @@ def process_loop_video(video_path, loop_type="none", num_loops=2, progress=gr.Pr
 # managing video naming over repeated runs       
 def clean_filename(filename):
     """Remove only timestamp patterns from filename, preserve processing markers"""
-    # Remove timestamp patterns (yymmmdd_HHMM)
-    filename = re.sub(r'_\d{6}_\d{4}', '', filename)
-    return filename       
+    filename = re.sub(r'_\d{6}_\d{6}', '', filename)  # Removes YYMMDD_HHMMSS
+    filename = re.sub(r'_\d{6}_\d{4}', '', filename)  # Removes YYMMDD_HHMM
+    return filename     
         
         
         
