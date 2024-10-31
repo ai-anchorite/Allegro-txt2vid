@@ -1,5 +1,5 @@
 accelerate==0.33.0
-diffusers
+git+https://github.com/huggingface/diffusers.git@9214f4a3782a74e510eff7e09b59457fe8b63511 # branch compatible with the recent Allegro update
 numpy==1.24.4
 #torch==2.4.1
 tqdm==4.66.2
