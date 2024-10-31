@@ -89,7 +89,7 @@ class AllegroTransformer3DModel(ModelMixin, ConfigMixin):
         patch_size: Optional[int] = None,
         patch_size_t: Optional[int] = None,
         activation_fn: str = "geglu",
-        num_embeds_ada_norm: Optional[int] = None,
+        num_embeds_ada_norm: Optional[int] = 1000,
         use_linear_projection: bool = False,
         only_cross_attention: bool = False,
         double_self_attention: bool = False,
@@ -105,7 +105,7 @@ class AllegroTransformer3DModel(ModelMixin, ConfigMixin):
         sa_attention_mode: str = "flash", 
         ca_attention_mode: str = 'xformers', 
         downsampler: str = None, 
-        use_rope: bool = False,
+        use_rope: bool = True,
         model_max_length: int = 300,
     ):
         super().__init__()

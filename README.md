@@ -32,6 +32,14 @@ A Pinokio Install Script for the [Rhymes Allegro](https://github.com/rhymes-ai/A
 </p> 
 Allegro is a powerful text-to-video model that generates high-quality videos up to 6 seconds at 15 FPS and 720p resolution from simple text input.
 
+## News 🔥
+ - [24/10/30] 🚀 We release multi-card inference code and PAB in [Allegro-VideoSys](https://github.com/nightsnack/Allegro-VideoSys). With VideoSys framework, the inference time can be further reduced to 3 mins (8xH100) and 2 mins (8xH100+PAB). We also opened a PR to the original [VideoSys repo](https://github.com/NUS-HPC-AI-Lab/VideoSys).
+
+ - [24/10/29] 🎉Congratulations that Allegro is merged into diffusers! Currently Allegro is supported in `0.32.0-dev0.` It will be integrated in the next release version. So for now, please use `pip install git+https://github.com/huggingface/diffusers.git@9214f4a3782a74e510eff7e09b59457fe8b63511` to install diffuser dev version. See [huggingface](https://huggingface.co/rhymes-ai/Allegro) for more details.
+
+
+
+
 ## Model Info
 <table>
   <tr>
@@ -80,10 +88,14 @@ Allegro is a powerful text-to-video model that generates high-quality videos up 
     <th>Single GPU Memory Usage</th>
     <td>9.3G BF16 (with cpu_offload)</td>
   </tr>
+    <tr>
+    <th>Inference time</th>
+    <td>20 mins (single H100) / 3 mins (8xH100)</td>
+  </tr>
 </table>
 
 ## Quick Start
-
+### Single Inference
 1. Download the [Allegro GitHub code](https://github.com/rhymes-ai/Allegro).
    
 2. Install the necessary requirements.
@@ -117,14 +129,17 @@ Allegro is a powerful text-to-video model that generates high-quality videos up 
   
     For better visual quality, please use imageio to save the video.
 
+### Multi-Card Inference
+We release multi-card inference code and PAB in [Allegro-VideoSys](https://github.com/nightsnack/Allegro-VideoSys). 
+
 ## Limitation
 - The model cannot render celebrities, legible text, specific locations, streets or buildings.
 
 ## Future Plan
-- Multiple GPU inference and further speed up (PAB)
-- Text & Image-To-Video (TI2V) video generation
-- Motion-controlled video generation
-- Visual quality enhancement
+- [x] Multiple GPU inference and further speed up (PAB)
+- [ ] Text & Image-To-Video (TI2V) video generation
+- [ ] Motion-controlled video generation
+- [ ] Visual quality enhancement
 
 ## Support
 If you encounter any problems or have any suggestions, feel free to [open an issue](https://github.com/rhymes-ai/Allegro/issues/new) or send an email to huanyang@rhymes.ai. 
