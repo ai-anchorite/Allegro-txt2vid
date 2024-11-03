@@ -98,104 +98,27 @@ def check_weights_exist():
     ]
     return all(os.path.exists(path) for path in required_paths)
 
-if not check_weights_exist():
-    print("Downloading model weights...")
-    snapshot_download(
-        repo_id='rhymes-ai/Allegro',
-        allow_patterns=[
-            'scheduler/**',
-            'text_encoder/**',
-            'tokenizer/**',
-            'transformer/**',
-            'vae/**',
-        ],
-        local_dir=weights_dir,
-    )
-else:
-    print("Model weights already present, skipping download.")
-
-
- ###################################################  
-# placeholder pipeline runner waiting for img2vid #
-#################################################
-def img2vid_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_steps, 
-                 seed, enable_cpu_offload, target_fps=15, progress=gr.Progress()):
-    dtype = torch.float16 
-    try:
-        # Load models
-        vae = AllegroAutoencoderKL3D.from_pretrained(
-            "./allegro_weights/vae/", 
-            torch_dtype=torch.float32
-        ).to(device)
-        vae.eval()
-
-        text_encoder = T5EncoderModel.from_pretrained(
-            "./allegro_weights/text_encoder/", 
-            torch_dtype=dtype
-        ).to(device)
-        text_encoder.eval()
-
-        tokenizer = T5Tokenizer.from_pretrained("./allegro_weights/tokenizer/")
-
-        scheduler = EulerAncestralDiscreteScheduler()
-
-        transformer = AllegroTransformer3DModel.from_pretrained(
-            "./allegro_weights/transformer/", 
-            torch_dtype=dtype
-        ).to(device)
-        transformer.eval()
-
-        allegro_pipeline = AllegroPipeline(
-            vae=vae,
-            text_encoder=text_encoder,
-            tokenizer=tokenizer,
-            scheduler=scheduler,
-            transformer=transformer
-        ).to(device)
-
-        if enable_cpu_offload:
-            allegro_pipeline.enable_sequential_cpu_offload()
-
-        # Clear any existing cache before generation
-        devicetorch.empty_cache(torch)
-
-        out_video = allegro_pipeline(
-            user_prompt, 
-            negative_prompt=negative_prompt, 
-            num_frames=88,
-            height=720,
-            width=1280,
-            num_inference_steps=num_sampling_steps,
-            guidance_scale=guidance_scale,
-            max_sequence_length=512,
-            generator=torch.Generator(device=device).manual_seed(seed)
-        ).video[0]
-
-        # Save video before cleanup
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        imageio.mimwrite(save_path, out_video, fps=FPS, quality=VIDEO_QUALITY)
-
-        return save_path
-
-    finally:
-        # Cleanup section - runs even if there's an error
-        try:
-            # Delete model objects
-            del vae
-            del text_encoder
-            del transformer
-            del allegro_pipeline
-            
-            # Clear CUDA cache
-            devicetorch.empty_cache(torch)
-            #torch.cuda.empty_cache()
-            
-            # Force garbage collection
-            gc.collect()
-            
-        except Exception as e:
-            print(f"Cleanup warning (non-critical): {str(e)}")
-
+def download_model():
+    if not check_weights_exist():
+        print("Downloading model weights...")
+        snapshot_download(
+            repo_id='rhymes-ai/Allegro',
+            allow_patterns=[
+                'scheduler/**',
+                'text_encoder/**',
+                'tokenizer/**',
+                'transformer/**',
+                'vae/**',
+            ],
+            local_dir=weights_dir,
+        )
+        download_button.visible = False
+        return "Model weights downloaded successfully!"
+    return "Model weights already present, skipping download."
+    
+def check_button_visibility():
+    return not check_weights_exist()
+    
     
 def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_steps, 
                  seed, enable_cpu_offload, target_fps=15, progress=gr.Progress()):
@@ -283,18 +206,14 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
             nonlocal generation_start
             elapsed = time.time() - generation_start
             
-            # Map pipeline step (iter_num) to our step count
-            current_step = iter_num + 1  # iter_num is 0-based
-            
+            current_step = iter_num + 1
             remaining_steps = num_sampling_steps - current_step
             eta_seconds = (elapsed / current_step) * remaining_steps if current_step > 0 else 0
             
-            # Format ETA nicely
             eta_min = int(eta_seconds // 60)
             eta_sec = int(eta_seconds % 60)
             
-            # Update both progress bar and messages
-            percent_complete = 0.05 + (current_step/num_sampling_steps * 0.75)  # Scale between 5-80%
+            percent_complete = 0.05 + (current_step/num_sampling_steps * 0.75)
             progress(percent_complete, desc=f"Step {current_step}/{num_sampling_steps} • ETA: {eta_min}m {eta_sec}s")
             
             progress_msg = f"Step {current_step}/{num_sampling_steps} • ETA: {eta_min}m {eta_sec}s"
@@ -306,6 +225,9 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
             num_frames=88,
             height=720,
             width=1280,
+            # num_frames=8,  #fast 1-minute test inference
+            # height=256,
+            # width=512,
             num_inference_steps=num_sampling_steps,
             guidance_scale=guidance_scale,
             max_sequence_length=512,
@@ -313,7 +235,7 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
             generator=torch.Generator(device=device).manual_seed(seed),
             callback=progress_callback,
             callback_steps=1
-        ).video[0]
+        ).video[0]        
 
         generation_time = time.time() - generation_start
         add_message(f"✨ Generation complete! Took {generation_time:.1f} seconds")
@@ -333,8 +255,14 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
             imageio.mimwrite(output_path, out_video, fps=15, quality=VIDEO_QUALITY)
             
             # Save prompt info
-            save_prompt_info(output_path, user_prompt, negative_prompt, 
-                           guidance_scale, num_sampling_steps, seed)
+            save_prompt_info(
+                output_path,
+                user_prompt,
+                negative_prompt,
+                guidance_scale,
+                num_sampling_steps,
+                seed
+            )
             
             add_message(f"✅ Generation complete! Saved to: {output_path}")
             progress(1.0, desc="Complete!")
@@ -343,13 +271,19 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
         # Handle interpolation
         add_message(f"\n🎯 Starting frame interpolation to {fps} FPS...")
         progress(0.85, desc="Interpolating frames...")
-        
+
         interpolation_start = time.time()
         interpolator = VideoInterpolator()
-        interpolated_frames = interpolator.process_video(out_video, target_fps=fps)
-        # console_out.update(value=messages)
-        
-        if isinstance(interpolated_frames, (list, np.ndarray)) and len(interpolated_frames) > 0:
+        interpolated_frames, interp_messages = interpolator.process_video(out_video, target_fps=fps)
+
+        # Add interpolator messages to our message log
+        for msg in interp_messages:
+            add_message(msg)
+
+        # Check if we actually got frames back (not just the original frames)
+        if (isinstance(interpolated_frames, (list, np.ndarray)) and 
+            len(interpolated_frames) == int(len(out_video) * (fps/15))):
+            
             interpolation_time = time.time() - interpolation_start
             interpolated_path = output_path.replace('.mp4', f'_{fps}fps.mp4')
             
@@ -359,16 +293,39 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
             imageio.mimwrite(interpolated_path, interpolated_frames, fps=fps, quality=VIDEO_QUALITY)
             
             # Save prompt info for interpolated version
-            save_prompt_info(interpolated_path, user_prompt, negative_prompt,
-                           guidance_scale, num_sampling_steps, seed, target_fps=fps)
+            save_prompt_info(
+                interpolated_path,
+                user_prompt,
+                negative_prompt,
+                guidance_scale,
+                num_sampling_steps,
+                seed,
+                target_fps=fps
+            )
             
             add_message(f"✅ Processing complete! Final video saved to: {interpolated_path}")
             progress(1.0, desc="Complete!")
             return interpolated_path, "\n".join(messages)
         else:
-            # Fallback to original if interpolation fails
-            add_message("⚠️ Interpolation failed, saving original video...")
+            # Log the actual vs expected frame count
+            expected_frames = int(len(out_video) * (fps/15))
+            actual_frames = len(interpolated_frames) if isinstance(interpolated_frames, (list, np.ndarray)) else 0
+            add_message(f"⚠️ Interpolation frame count mismatch: got {actual_frames}, expected {expected_frames}")
+            
+            # Fallback to original
+            add_message("⚠️ Interpolation verification failed, saving original video...")
             imageio.mimwrite(output_path, out_video, fps=15, quality=VIDEO_QUALITY)
+            
+            # Save prompt info for original
+            save_prompt_info(
+                output_path,
+                user_prompt,
+                negative_prompt,
+                guidance_scale,
+                num_sampling_steps,
+                seed
+            )
+            
             add_message(f"✅ Original video saved to: {output_path}")
             progress(1.0, desc="Complete!")
             return output_path, "\n".join(messages)
@@ -387,13 +344,6 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
     finally:
         try:
             # Cleanup section
-            cleanup_messages = [
-                "\n🧹 CLEANUP PHASE",
-                "═" * 25
-            ]
-            for msg in cleanup_messages:
-                messages.append(update_console(msg, add_timestamp=False))
-            
             del vae
             del text_encoder
             del transformer
@@ -405,88 +355,8 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
             
         except Exception as e:
             messages.append(update_console(f"⚠️ Cleanup warning (non-critical): {str(e)}", add_timestamp=False))
+
      
-     
-def randomize_seed():
-    return random.randint(0, 10000)
-
-    
-def get_system_info():
-    """Get detailed system status including peak VRAM and shared memory"""
-    try:
-        # Basic GPU name
-        gpu_info = f"🎮 GPU: {torch.cuda.get_device_name(0)}\n"
-        
-        # Get GPU metrics from nvidia-smi
-        try:
-            result = subprocess.check_output([
-                'nvidia-smi', '--query-gpu=memory.used,memory.total,memory.reserved,temperature.gpu,utilization.gpu',
-                '--format=csv,nounits,noheader'
-            ], encoding='utf-8', timeout=1.0)
-            memory_used, memory_total, memory_reserved, temp, util = map(int, result.strip().split(','))
-            
-            # Convert memory to GB for display
-            gpu_memory = memory_used / 1024  # Convert MB to GB
-            total_memory = memory_total / 1024
-            shared_memory = memory_reserved / 1024
-            
-            gpu_info += f"📊 GPU Memory: {gpu_memory:.1f}GB / {total_memory:.1f}GB\n"
-            gpu_info += f"💫 Shared Memory: {shared_memory:.1f}GB\n"
-            gpu_info += f"🌡️ GPU Temp: {temp}°C\n"
-            gpu_info += f"⚡ GPU Load: {util}%\n"
-            
-        except:
-            gpu_info += "Unable to get detailed GPU metrics\n"
-            
-        # Quick CPU and RAM checks
-        cpu_info = f"💻 CPU Usage: {psutil.cpu_percent()}%\n"
-        ram_info = f"🎯 RAM Usage: {psutil.virtual_memory().percent}%"
-        
-        return f"{gpu_info}{cpu_info}{ram_info}"
-        
-    except Exception as e:
-        return f"Error collecting system info: {str(e)}"
-
-
-def generate_output_path(user_prompt):
-    timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
-    return f"{save_path}/alle_{timestamp}.mp4"  
-
-
-def save_prompt_info(video_path, user_prompt, negative_prompt, guidance_scale, steps, seed, test_mode=False, target_fps=None):
-    info_path = video_path.replace('.mp4', '_info.txt')
-    with open(info_path, 'w') as f:
-        f.write(f"Prompt: {user_prompt}\n")
-        f.write(f"Negative Prompt: {negative_prompt}\n")
-        f.write(f"Guidance Scale: {guidance_scale}\n")
-        f.write(f"Steps: {steps}\n")
-        f.write(f"Seed: {seed}\n")
-        f.write(f"Test Mode: {'Yes' if test_mode else 'No'}\n")
-        if target_fps:
-            f.write(f"Target FPS: {target_fps}\n")
-        f.write(f"Generated: {datetime.now().strftime('%y%m%d_%H%M')}\n")
-
-
-def open_output_folder():
-    folder_path = os.path.abspath(save_path) 
-    
-    # Create folder if it doesn't exist
-    try:
-        os.makedirs(folder_path, exist_ok=True)
-    except Exception as e:
-        return f"Error creating folder: {str(e)}"
-        
-    # Open folder
-    try:
-        if os.name == 'nt':  # Windows
-            os.startfile(folder_path)
-        elif os.name == 'posix':  # macOS and Linux
-            subprocess.run(['xdg-open' if os.name == 'posix' else 'open', folder_path])
-        return f"Opening folder: {folder_path}"
-    except Exception as e:
-        return f"Error opening folder: {str(e)}"
-
-
 class VideoInterpolator:
     def __init__(self):
         self.model = None
@@ -620,7 +490,7 @@ class VideoInterpolator:
                     result_frames.extend(interp_frames)
                 else:
                     self.add_message("❌ Interpolation failed")
-                    return video_frames, self.messages
+                    return None, self.messages
             
             # Add final frame
             result_frames.append(video_frames[-1])
@@ -637,188 +507,88 @@ class VideoInterpolator:
             
         except Exception as e:
             self.add_message(f"❌ Error during video processing: {str(e)}")
-            return video_frames, self.messages
-        
+            return None, self.messages
 
-    
-## Test Zone!
 
-def test_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_steps, 
-                  seed, enable_cpu_offload, target_fps=15, progress=gr.Progress()):
-    dtype = torch.float16 
-    messages = []
+def randomize_seed():
+    return random.randint(0, 10000)
 
-    def add_message(msg):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        formatted_msg = f"[{timestamp}] {msg}"
-        messages.append(formatted_msg)
-        print(formatted_msg)
-        return "\n".join(messages)
 
+def get_system_info():
+    """Get detailed system status"""
     try:
-        # Initial status block
-        summary_messages = [
-            "\n🧪 STARTING TEST GENERATION",
-            "═" * 25,
-            "📄 Test Settings:",
-            f"• Prompt: '{user_prompt}'",
-            f"• Steps: {num_sampling_steps}",
-            f"• Guidance: {guidance_scale}",
-            f"• Seed: {seed}",
-            f"• Target FPS: {target_fps}",
-            "═" * 25
-        ]
-        for msg in summary_messages:
-            messages.append(update_console(msg, add_timestamp=False))
-
-        progress(0.1, desc="Loading models...")
-        add_message("📥 Loading models (test mode)...")
-
-        # Load models
-        vae = AllegroAutoencoderKL3D.from_pretrained(
-            "./allegro_weights/vae/", 
-            torch_dtype=torch.float32
-        ).to(device)
-        vae.eval()
-        add_message("✓ VAE loaded")
-
-        text_encoder = T5EncoderModel.from_pretrained(
-            "./allegro_weights/text_encoder/", 
-            torch_dtype=dtype
-        ).to(device)
-        text_encoder.eval()
-        add_message("✓ Text encoder loaded")
-
-        tokenizer = T5Tokenizer.from_pretrained("./allegro_weights/tokenizer/")
-        scheduler = EulerAncestralDiscreteScheduler()
-        transformer = AllegroTransformer3DModel.from_pretrained(
-            "./allegro_weights/transformer/", 
-            torch_dtype=dtype
-        ).to(device)
-        transformer.eval()
-        add_message("✓ Transformer loaded")
-
-        progress(0.3, desc="Initializing pipeline...")
-        add_message("🔄 Setting up test pipeline...")
-
-        allegro_pipeline = AllegroPipeline(
-            vae=vae,
-            text_encoder=text_encoder,
-            tokenizer=tokenizer,
-            scheduler=scheduler,
-            transformer=transformer
-        ).to(device)
-
-        if enable_cpu_offload:
-            add_message("💾 Enabling CPU offload...")
-            allegro_pipeline.enable_sequential_cpu_offload()
-
-        devicetorch.empty_cache(torch)
-
-        # Generate the test video with minimal settings
-        progress(0.5, desc="Generating test frames...")
-        add_message("\n🎬 Starting quick test generation...")
-        add_message("Using minimal settings for faster testing:")
-        add_message(f"• Frames: 8")
-        add_message(f"• Resolution: 256x512")
-        add_message(f"• Steps: 8")
-
-        generation_start = time.time()
-        out_video = allegro_pipeline(
-            user_prompt, 
-            negative_prompt=negative_prompt, 
-            num_frames=8,        # Minimum frames
-            height=256,          # Smaller
-            width=512,           # Smaller
-            num_inference_steps=8,   # Faster
-            guidance_scale=guidance_scale,
-            max_sequence_length=512,
-            generator=torch.Generator(device=device).manual_seed(seed)
-        ).video[0]
-
-        generation_time = time.time() - generation_start
-        add_message(f"✨ Test generation complete! Took {generation_time:.1f} seconds")
-
-        # Create output path and directory
-        progress(0.7, desc="Processing output...")
-        output_path = generate_output_path(user_prompt)
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        test_path = output_path.replace('.mp4', '_test.mp4')
+        # Basic GPU name
+        gpu_info = f"🎮 GPU: {torch.cuda.get_device_name(0)}\n"
         
-        # Parse the FPS from the radio button choice
-        fps = int(target_fps.split()[0]) if isinstance(target_fps, str) else int(target_fps)
-        
-        # If we don't need interpolation, save and return original
-        if fps <= 15:
-            add_message("📼 Saving test video at original 15 FPS...")
-            imageio.mimwrite(test_path, out_video, fps=15, quality=VIDEO_QUALITY)
-            add_message(f"✅ Test video saved: {os.path.basename(test_path)}")
-            return test_path, "\n".join(messages)
-            
-        # Handle interpolation if fps > 15
-        progress(0.8, desc="Running frame interpolation...")
-        add_message(f"\n🎯 Starting frame interpolation to {fps} FPS...")
-        
-        interpolation_start = time.time()
-        interpolator = VideoInterpolator()
-        interpolated_frames, interp_messages = interpolator.process_video(out_video, target_fps=fps)
-        
-        # Add interpolator messages to our message list
-        messages.extend([update_console(msg, add_timestamp=False) for msg in interp_messages])
-        
-        if isinstance(interpolated_frames, (list, np.ndarray)) and len(interpolated_frames) > 0:
-            interpolation_time = time.time() - interpolation_start
-            test_path_interp = output_path.replace('.mp4', f'_test_{fps}fps.mp4')
-            
-            progress(0.9, desc="Saving interpolated video...")
-            add_message(f"⚡ Frame interpolation complete! Took {interpolation_time:.1f} seconds")
-            add_message(f"📼 Saving interpolated test video at {fps} FPS...")
-            
-            imageio.mimwrite(test_path_interp, interpolated_frames, fps=fps, quality=VIDEO_QUALITY)
-            add_message(f"✅ Final test video saved: {os.path.basename(test_path_interp)}")
-            return test_path_interp, "\n".join(messages)
-        else:
-            # Fallback to original if interpolation fails
-            add_message("⚠️ Interpolation failed, saving original video...")
-            imageio.mimwrite(test_path, out_video, fps=15, quality=VIDEO_QUALITY)
-            add_message(f"✅ Original test video saved: {os.path.basename(test_path)}")
-            return test_path, "\n".join(messages)
-
-    except Exception as e:
-        error_messages = [
-            "\n❌ ERROR DURING TEST GENERATION",
-            "═" * 25,
-            f"Details: {str(e)}",
-            "═" * 25
-        ]
-        for msg in error_messages:
-            messages.append(update_console(msg, add_timestamp=False))
-        return None, "\n".join(messages)
-
-    finally:
+        # Get GPU metrics from nvidia-smi
         try:
-            # Cleanup section
-            progress(1.0, desc="Cleaning up...")
-            cleanup_messages = [
-                "\n🧹 CLEANUP PHASE",
-                "═" * 25
-            ]
-            for msg in cleanup_messages:
-                messages.append(update_console(msg, add_timestamp=False))
+            result = subprocess.check_output([
+                'nvidia-smi', '--query-gpu=memory.used,memory.total,memory.reserved,temperature.gpu,utilization.gpu',
+                '--format=csv,nounits,noheader'
+            ], encoding='utf-8', timeout=1.0)
+            memory_used, memory_total, memory_reserved, temp, util = map(int, result.strip().split(','))
             
-            del vae
-            del text_encoder
-            del transformer
-            del allegro_pipeline
-            devicetorch.empty_cache(torch)
-            gc.collect()
+            # Convert memory to GB for display
+            gpu_memory = memory_used / 1024  # Convert MB to GB
+            total_memory = memory_total / 1024
+            shared_memory = memory_reserved / 1024
             
-            messages.append(update_console("✓ Resources cleaned up successfully", add_timestamp=False))
+            gpu_info += f"📊 GPU Memory: {gpu_memory:.1f}GB / {total_memory:.1f}GB\n"
+            gpu_info += f"💫 Shared Memory: {shared_memory:.1f}GB\n"
+            gpu_info += f"🌡️ GPU Temp: {temp}°C\n"
+            gpu_info += f"⚡ GPU Load: {util}%\n"
             
-        except Exception as e:
-            messages.append(update_console(f"⚠️ Cleanup warning (non-critical): {str(e)}", add_timestamp=False))
+        except:
+            gpu_info += "Unable to get detailed GPU metrics\n"
+            
+        # Quick CPU and RAM checks
+        cpu_info = f"💻 CPU Usage: {psutil.cpu_percent()}%\n"
+        ram_info = f"🎯 RAM Usage: {psutil.virtual_memory().percent}%"
+        
+        return f"{gpu_info}{cpu_info}{ram_info}"
+        
+    except Exception as e:
+        return f"Error collecting system info: {str(e)}"
 
 
+def generate_output_path(user_prompt):
+    timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+    return f"{save_path}/alle_{timestamp}.mp4"  
+
+
+def save_prompt_info(video_path, user_prompt, negative_prompt, guidance_scale, steps, seed, test_mode=False, target_fps=None):
+    info_path = video_path.replace('.mp4', '_info.txt')
+    with open(info_path, 'w') as f:
+        f.write(f"Prompt: {user_prompt}\n")
+        f.write(f"Negative Prompt: {negative_prompt}\n")
+        f.write(f"Guidance Scale: {guidance_scale}\n")
+        f.write(f"Steps: {steps}\n")
+        f.write(f"Seed: {seed}\n")
+        f.write(f"Test Mode: {'Yes' if test_mode else 'No'}\n")
+        if target_fps:
+            f.write(f"Target FPS: {target_fps}\n")
+        f.write(f"Generated: {datetime.now().strftime('%y%m%d_%H%M')}\n")
+
+
+def open_output_folder():
+    folder_path = os.path.abspath(save_path) 
+    
+    # Create folder if it doesn't exist
+    try:
+        os.makedirs(folder_path, exist_ok=True)
+    except Exception as e:
+        return f"Error creating folder: {str(e)}"
+        
+    # Open folder
+    try:
+        if os.name == 'nt':  # Windows
+            os.startfile(folder_path)
+        elif os.name == 'posix':  # macOS and Linux
+            subprocess.run(['xdg-open' if os.name == 'posix' else 'open', folder_path])
+        return f"Opening folder: {folder_path}"
+    except Exception as e:
+        return f"Error opening folder: {str(e)}"
+        
 # Manual post-processing tools
 
 def interpolate_frames(frame1, frame2, timestep):
@@ -1399,11 +1169,9 @@ def analyze_video_input(video_path):
             
             # Add resolution-based warnings
             if width >= 3840 or height >= 2160:  # 4K
-                messages.append("\n⚠️  High Resolution Warning:")
+                messages.append("\nHigh Resolution Video:")
                 messages.append("• 4K video detected - expect long processing times")
-                messages.append("• Consider downscaling for faster results:")
             elif width >= 2560 or height >= 1440:  # 1440p
-                messages.append("\n⚠️  Note:")
                 messages.append("• High resolution video (1440p+)")
                 messages.append("• Processing time will be increased")
             
@@ -1570,7 +1338,7 @@ def update_console(msg, console_output=None, add_timestamp=True):
         timestamp = datetime.now().strftime("%H:%M:%S")
         msg = f"[{timestamp}] {msg}"
     
-    print(msg)  # Always print to terminal
+    print(msg) 
     
     if console_output is not None:
         current = console_output.value if console_output.value else ""
@@ -1591,11 +1359,14 @@ def get_welcome_message():
     return """
 🎬 What to expect:
 • Generation takes about 1 hour per video (on a 3090)
-• Output will be 720 x 1280 at 15fps, 30fps, or 60fps depending on Interpolation options.
-• Each video is ~88 frames long
-• The video models (20GB+) are downloaded on the first txt2video generation. 
-• If you're only intending to use the manual tools in the Tool Box, ignore the Generate Video section and avoid the massive model downloads!
-• If a video loaded into the Tool Box shows blank with NaN:NaN, just ignore or click the Process button to send it back to Input. It's just a gradio display bug.
+• Output will be 720 x 1280
+• Each video is ~88 frames 
+• 15fps, 30fps, or 60fps depending on Interpolation setting (doesn't affect duration)
+• The video models (40GB+) are downloaded manually via the big UI button
+
+## 📝 Notes: 
+• If you're only planning on using the manual tools in the Tool Box, ignore the Generate Video section and avoid the massive model downloads!
+
 
 ⚙️ Important Settings:
 • "Enable CPU Offload" is ON by default - recommended for most users
@@ -1618,13 +1389,15 @@ def get_toolbox_info():
     return """🧰 TOOL BOX GUIDE
 
 ## 📝 Overview
-The Tool Box provides post-processing tools for enhancing and modifying generated or imported videos. You can adjust speed, increase frame rates, add visual effects, and create loops.
+The Tool Box provides FFmpeg derived post-processing tools for polishing generated or imported videos. You can adjust speed, increase frame rates, add filters, and create loops.
 
 ## 🎯 Video Input/Output
 • Drop videos directly into the Input window
 • Processed videos appear in the Output window
 • Use "⬅️ Use as Input" to chain multiple effects
 • Generated videos can be sent to Tool Box using "⬇️ Send to Tool Box"
+
+• If a video loaded into the Tool Box shows blank with NaN:NaN, just ignore or click the Process button to send it back to Input. It's just a gradio display bug.
 
 ## ⚡ Frame Interpolation
 RIFE AI interpolation smooths motion by generating extra frames:
@@ -1659,7 +1432,9 @@ Style Presets:
 
 Tip: Start with presets, then fine-tune with manual controls!
 
-Presets can be altered by editing gradio_app.py -> update_sliders_for_preset() [currently around line 1160]
+Note: I haven't really done much with these. Very, very easy to adjust them in the code to your tastes. 
+
+Presets can be altered by editing gradio_app.py -> update_sliders_for_preset() [currently around line 930]
 """
 
 def get_gen_info():
@@ -1716,7 +1491,7 @@ Process multiple videos overnight:
   Third prompt...
 
 • Info:
-  - WIP! Untested as of 11/03
+  - WIP! I've tested it some, and seems to work as expected.
   - No hard limit to number of prompts.  Be careful!
   - CFG, Steps, and Interp settings currently apply to every prompt
   - Seeds auto-increment for variety
@@ -1746,6 +1521,7 @@ with gr.Blocks() as demo:
     with gr.Row():
         video_output = gr.Video(label="Generated Video")
     with gr.Row():
+        download_button = gr.Button("Download txt2vid Models First! (40GB) - not required for Tool Box.", visible=check_button_visibility(), variant="huggingface", scale=10)
         submit_btn = gr.Button("Generate Video", variant="primary", scale=4)
         transfer_to_toolbox_btn = gr.Button("⬇️ Send to Tool Box", visible=False, scale=1, variant="huggingface")
         
@@ -1788,7 +1564,9 @@ with gr.Blocks() as demo:
                         label="RIFE Frame Interpolation",
                         info="Smooth motion by increasing fps"
                     )
-                    send_to_input_btn = gr.Button("⬅️ Use as Input", visible=False)
+                with gr.Row():
+                    send_to_main_btn = gr.Button("⬆️ Send to Main Display", visible=False, variant="huggingface")
+                    send_to_input_btn = gr.Button("⬅️ Use as Input", visible=False, variant="huggingface")
                     
                 with gr.Row():                    
                     speed_factor = gr.Slider(
@@ -1800,7 +1578,7 @@ with gr.Blocks() as demo:
                         info="Slow-mo (0.25x) to speed-up (2x)"
                     )
                 with gr.Row():    
-                    process_btn = gr.Button("Process Video Interpolation", variant="primary")
+                    process_btn = gr.Button("Process Frame Adjustments", variant="primary")
                 gr.HTML('<hr style="margin: 20px 0; border: none; border-top: 1px solid rgba(128, 128, 128, 0.2);">') 
                 
                 with gr.Accordion("🔄 Video Loop", open=True):        
@@ -1822,7 +1600,7 @@ with gr.Blocks() as demo:
                         loop_btn = gr.Button("Create Loop (⬅️ on Input Video)", variant="primary")
                     gr.HTML('<hr style="margin: 20px 0; border: none; border-top: 1px solid rgba(128, 128, 128, 0.2);">')
 
-                with gr.Accordion("🎨 Video Filters", open=True):
+                with gr.Accordion("🎨 Video Filters - FFmpeg", open=True):
                     with gr.Row():
                         preset = gr.Radio(
                             choices=["none", "cinematic", "vintage", "cool", "warm", "dramatic"],
@@ -1837,7 +1615,7 @@ with gr.Blocks() as demo:
                         
                     with gr.Row():
                         saturation = gr.Slider(0, 2, value=1, step=0.1, label="Saturation", info="Adjust color intensity")
-                        temperature = gr.Slider(-50, 50, value=0, step=1, label="Temperature", info="Adjust color temperature (warm/cool)")
+                        temperature = gr.Slider(-50, 50, value=0, step=1, label="Temperature", info="Adjust color temperature (cool/warm)")
                         
                     with gr.Row():
                         sharpen = gr.Slider(0, 5, value=0, step=0.1, label="Sharpen", info="Add sharpening effect")
@@ -1853,11 +1631,17 @@ with gr.Blocks() as demo:
 
 
                         
-                gr.HTML('<hr style="margin: 20px 0; border: none; border-top: 1px solid rgba(128, 128, 128, 0.2);">')            
-            with gr.Accordion("Dev Tools", open=False):
-                with gr.Row():
-                    test_btn = gr.Button("🧪 Two Minute Test Generation", variant="primary")
-                  
+                # gr.HTML('<hr style="margin: 20px 0; border: none; border-top: 1px solid rgba(128, 128, 128, 0.2);">')            
+            # with gr.Accordion("Dev Tools", open=False):
+                # with gr.Row():
+                    # test_btn = gr.Button("🧪 Two Minute Test Generation", variant="primary")
+                # with gr.Row():
+                    # num_frames = gr.Slider(minimum=8, maximum=88, step=1, 
+                                           # label="Number of Frames", info="for test purposes only",value=88)
+                    # height = gr.Slider(minimum=360, maximum=720, step=1, 
+                                           # label="Video Height", info="for test purposes only",value=720)
+                    # width = gr.Slider(minimum=640, maximum=1280, step=1, 
+                                           # label="Video Width", info="for test purposes only",value=1280)
                     
         with gr.Column():    
             negative_prompt = gr.Textbox(
@@ -1870,7 +1654,7 @@ with gr.Blocks() as demo:
             with gr.Row():
                 with gr.Accordion("Batch Processing", open=False):
                     batch_prompts = gr.TextArea(
-                        label="Batch Prompts (separate with ---)   [note: this is untested!]",
+                        label="Batch Prompts (separate with ---)",
                         placeholder="First prompt here...\n---\nSecond prompt here...\n---\nThird prompt...",
                         lines=5
                     )
@@ -1924,13 +1708,14 @@ with gr.Blocks() as demo:
 
     # Event handlers
     
+    download_button.click(fn=download_model, outputs=console_out)
+    
     random_seed.click(fn=randomize_seed, outputs=seed)
     
-    # Timer that updates system info if monitor view is selected
+    # Timer that updates system info
     timer = gr.Timer(value=1)
     timer.tick(
         fn=lambda: get_system_info(),
-        # inputs=get_system_info,
         outputs=status_info
     )
     
@@ -1955,20 +1740,23 @@ with gr.Blocks() as demo:
         show_progress=True
     )
 
-    test_btn.click(
-        fn=test_inference,
-        inputs=[
-            user_prompt, 
-            negative_prompt, 
-            guidance_scale, 
-            num_sampling_steps, 
-            seed, 
-            enable_cpu_offload, 
-            target_fps
-        ],
-        outputs=[video_output, console_out],
-        show_progress=True
-    )
+    # test_btn.click(
+        # fn=run_inference,
+        # inputs=[
+            # user_prompt, 
+            # negative_prompt, 
+            # guidance_scale, 
+            # num_sampling_steps, 
+            # seed, 
+            # enable_cpu_offload, 
+            # target_fps, 
+            # height, 
+            # width, 
+            # num_frames
+        # ],
+        # outputs=[video_output, console_out],
+        # show_progress=True
+    # )
    
     def reset_processing_controls():
         return "0x fps", 1.0  # Default values for process_fps and speed_factor
@@ -2026,21 +1814,9 @@ with gr.Blocks() as demo:
     
     # Show/hide "Send to Input" button based on output_processed state
     output_processed.change(
-        fn=lambda x: gr.update(visible=bool(x)),
+        fn=lambda x: [gr.update(visible=bool(x)), gr.update(visible=bool(x))],
         inputs=[output_processed],
-        outputs=[send_to_input_btn]
-    )
-    
-    # Handle sending processed video back to input
-    def send_to_input(video):
-        """Transfer processed video to input and reset processing controls"""
-        return video, "0x fps", 1.0, None  # Return as tuple in order of outputs
-
-    # Update the click handler to include output_processed
-    send_to_input_btn.click(
-        fn=send_to_input,
-        inputs=[output_processed],
-        outputs=[input_video, process_fps, speed_factor, output_processed]
+        outputs=[send_to_input_btn, send_to_main_btn]
     )
     
     # click handler for the filters button
@@ -2062,6 +1838,62 @@ with gr.Blocks() as demo:
         show_progress="minimal"
     )
     
+   
+    # Show/hide transfer buttons based on video_output state
+    output_processed.change(
+        fn=lambda x: gr.update(visible=bool(x)), 
+        inputs=[output_processed],
+        outputs=send_to_main_btn
+    )
+    # Show/hide transfer button based on video_output state
+    video_output.change(
+        fn=lambda x: gr.update(visible=bool(x)),
+        inputs=[video_output],
+        outputs=[transfer_to_toolbox_btn]
+    )
+
+    
+    def transfer_to_toolbox(video):
+        """Transfer generated video to toolbox input and reset processing controls"""
+        return (
+            video,      # input_video
+            "0x fps",   # process_fps
+            1.0,        # speed_factor
+            None,       # output_processed (clear it)
+            True        # expand Tool Box accordion
+        )
+    # main video to toolbox
+    transfer_to_toolbox_btn.click(
+        fn=transfer_to_toolbox,
+        inputs=[video_output],
+        outputs=[
+            input_video,
+            process_fps,
+            speed_factor,
+            output_processed
+        ]
+    )
+    # send processed video back to input
+    def send_to_input(video):
+        return video, "0x fps", 1.0, None  # Return as tuple in order of outputs
+
+    # send toolbox result to input
+    send_to_input_btn.click(
+        fn=send_to_input,
+        inputs=[output_processed],
+        outputs=[input_video, process_fps, speed_factor, output_processed]
+    )
+    
+    # Transfer processed video to main display
+    def send_to_main_display(video):
+        return video
+
+    send_to_main_btn.click(
+        fn=send_to_main_display,
+        inputs=[output_processed],
+        outputs=[video_output]
+    )       
+
     # handler for the preset radio button:
     preset.change(
         fn=update_sliders_for_preset,
@@ -2075,36 +1907,6 @@ with gr.Blocks() as demo:
             blur,
             denoise,
             vignette
-        ]
-    )
-    
-    # Show/hide transfer button based on video_output state
-    video_output.change(
-        fn=lambda x: gr.update(visible=bool(x)),
-        inputs=[video_output],
-        outputs=[transfer_to_toolbox_btn]
-    )
-
-    # Function to handle transfer and reset processing controls
-    def transfer_to_toolbox(video):
-        """Transfer generated video to toolbox input and reset processing controls"""
-        return (
-            video,      # input_video
-            "0x fps",   # process_fps
-            1.0,        # speed_factor
-            None,       # output_processed (clear it)
-            True        # expand Tool Box accordion
-        )
-
-    # Handle the transfer button click
-    transfer_to_toolbox_btn.click(
-        fn=transfer_to_toolbox,
-        inputs=[video_output],
-        outputs=[
-            input_video,
-            process_fps,
-            speed_factor,
-            output_processed
         ]
     )
     
