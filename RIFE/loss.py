@@ -3,8 +3,8 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+import devicetorch
+device = devicetorch.get(torch)
 
 
 class EPE(nn.Module):
