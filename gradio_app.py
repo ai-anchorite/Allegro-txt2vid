@@ -719,7 +719,6 @@ def process_existing_video(video_path, target_fps, speed_factor=1.0, progress=gr
         ])
         
     try:
-
         # Input summary block
         summary_messages = [
             "\n🎬  NEW VIDEO PROCESSING TASK",
@@ -731,7 +730,23 @@ def process_existing_video(video_path, target_fps, speed_factor=1.0, progress=gr
         ]
         for msg in summary_messages:
             messages.append(update_console(msg, add_timestamp=False))
-            # print(msg)
+
+        # Extract audio from source if it exists
+        audio_path = None
+        try:
+            temp_audio = video_path + '.temp.wav'
+            add_message("📻 Extracting audio track...")
+            subprocess.run([
+                'ffmpeg', '-y', '-i', video_path, 
+                '-vn', '-acodec', 'pcm_s16le', 
+                '-ar', '44100', '-ac', '2',
+                temp_audio
+            ], capture_output=True)
+            if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 0:
+                audio_path = temp_audio
+                add_message("✓ Audio track extracted")
+        except Exception as e:
+            add_message(f"Note: No audio track found or error extracting: {str(e)}")
             
         # Load video
         video_frames = imageio.mimread(video_path, memtest=False)
@@ -892,7 +907,50 @@ def process_existing_video(video_path, target_fps, speed_factor=1.0, progress=gr
         add_message("💾  Saving processed video...")
         
         final_fps = original_fps * fps_multiplier if fps_multiplier > 0 else original_fps
-        imageio.mimwrite(output_path, video_frames, fps=final_fps, quality=VIDEO_QUALITY)
+        
+        # First save without audio
+        temp_video = output_path + '.temp.mp4'
+        imageio.mimwrite(temp_video, video_frames, fps=final_fps, quality=VIDEO_QUALITY)
+        
+        # If we have audio, combine it with the video
+        if audio_path:
+            try:
+                add_message("🔊 Processing audio track...")
+                
+                # Adjust audio speed to match video
+                speed_adjusted_audio = audio_path + '.speed.wav'
+                subprocess.run([
+                    'ffmpeg', '-y', '-i', audio_path,
+                    '-filter:a', f'atempo={speed_factor}',
+                    speed_adjusted_audio
+                ], capture_output=True)
+                
+                # Combine video and speed-adjusted audio
+                subprocess.run([
+                    'ffmpeg', '-y',
+                    '-i', temp_video,
+                    '-i', speed_adjusted_audio,
+                    '-c:v', 'copy', '-c:a', 'aac',
+                    output_path
+                ], capture_output=True)
+                
+                # Cleanup temp files
+                for f in [audio_path, speed_adjusted_audio, temp_video]:
+                    try:
+                        if f and os.path.exists(f):
+                            os.remove(f)
+                    except:
+                        pass
+                        
+                add_message("✓ Audio track processed and merged")
+                
+            except Exception as e:
+                add_message(f"⚠️ Audio processing failed: {str(e)}")
+                # Fallback to video without audio
+                os.rename(temp_video, output_path)
+        else:
+            # No audio to process, just rename the temp video
+            os.rename(temp_video, output_path)
         
         # Final summary
         final_summary = [
@@ -903,7 +961,6 @@ def process_existing_video(video_path, target_fps, speed_factor=1.0, progress=gr
         ]
         for msg in final_summary:
             messages.append(update_console(msg, add_timestamp=False))
-            # print(msg)
         
         return output_path, "\n".join(messages)
         
