@@ -861,9 +861,11 @@ def process_existing_video(video_path, target_fps, speed_factor=1.0, progress=gr
                             "• Videos that have been edited or re-encoded",
                             "• AI-generated content",
                             "\n💡  Solutions:",
-                            "1. Re-encode with constant frame size:",
-                            "2. Convert to MP4 with h264 codec",
-                            "3. Use a video editor to export at fixed dimensions",
+                            " 👉 Process the video at Interpolation 0x, and send back to input",
+                            "\nOtherwise, try one of the following:",
+                            "• Re-encode with constant frame size:",
+                            "• Convert to MP4 with h264 codec",
+                            "• Use a video editor to export at fixed dimensions",
                             "═" * 25
                         ]
                         
@@ -1576,7 +1578,7 @@ title = """<style>.allegro-banner{background:linear-gradient(to bottom,#162828,#
 with gr.Blocks() as demo:
     #gr.HTML(title)
     with gr.Row():
-        video_output = gr.Video(label="Generated Video")
+        video_output = gr.Video(label="Generated Video", height=540)  # limit vertical expansion for user vids
     with gr.Row():
         download_button = gr.Button("Download txt2vid Models First! (40GB) - not required for Tool Box.", visible=check_button_visibility(), variant="huggingface", scale=10)
         submit_btn = gr.Button("Generate Video", variant="primary", scale=4)
