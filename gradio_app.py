@@ -1050,7 +1050,7 @@ def update_sliders_for_preset(preset_name):
             "contrast": 1.3,
             "saturation": 0.9,
             "brightness": -5,
-            "temperature": 10,
+            "temperature": 20,
             "vignette": 10,
             "sharpen": 1.2,
             "blur": 0,
@@ -1088,10 +1088,10 @@ def update_sliders_for_preset(preset_name):
         },
         "dramatic": {
             "contrast": 1.4,
-            "saturation": 0.85,
-            "brightness": -10,
+            "saturation": 0.9,
+            "brightness": -5,
             "temperature": 0,
-            "vignette": 50,
+            "vignette": 20,
             "sharpen": 1.5,
             "blur": 0,
             "denoise": 0
