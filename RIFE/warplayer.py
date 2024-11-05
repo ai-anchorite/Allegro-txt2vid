@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+import devicetorch
+device = devicetorch.get(torch)
 backwarp_tenGrid = {}
 
 

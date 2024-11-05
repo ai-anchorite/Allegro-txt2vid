@@ -9,8 +9,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from .IFNet_HDv3 import *
 import torch.nn.functional as F
 from .loss import *
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+import devicetorch
+device = devicetorch.get(torch)
 
 
 class Model:

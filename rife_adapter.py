@@ -1,10 +1,13 @@
 import torch
+import devicetorch
 from RIFE.RIFE_HDv3 import Model as BaseModel
+device = devicetorch.get(torch)
+
 
 class EnhancedRIFEModel(BaseModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = devicetorch.get(torch)
         self.flownet.to(self.device)
         
     def to(self, target_device):
