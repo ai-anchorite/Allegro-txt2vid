@@ -1638,7 +1638,7 @@ title = """<style>.allegro-banner{background:linear-gradient(to bottom,#162828,#
 with gr.Blocks(css=css) as demo:
     #gr.HTML(title)
     with gr.Row():
-        video_output = gr.Video(label="Generated Video", elem_classes="video-natural-size")
+        video_output = gr.Video(label="Generated Video", elem_classes="video-natural-size", interactive=False)
     with gr.Row():
         download_button = gr.Button("Download txt2vid Models First! (40GB) - not required for Tool Box.", variant="primary", visible=check_button_visibility())
         submit_btn = gr.Button("Generate Video", variant="primary", scale=4, visible=check_generate_button_visibility())
