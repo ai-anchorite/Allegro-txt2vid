@@ -701,13 +701,12 @@ def process_loop_video(video_path, loop_type="none", num_loops=2, progress=gr.Pr
         ])
         
         # Create output path
+        os.makedirs(INTERPOLATED_PATH, exist_ok=True)
         filename = os.path.basename(video_path)
-        name, ext = os.path.splitext(filename)
+        name = clean_filename(os.path.splitext(filename)[0])
         timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
-        output_path = os.path.join(
-            INTERPOLATED_PATH, 
-            f"{name}_{loop_type}_{num_loops}x_{timestamp}.mp4"
-        )
+        output_path = os.path.join(INTERPOLATED_PATH, f"{name}_{loop_type}_{num_loops}x_{timestamp}.mp4")
+        
         
         if loop_type == "ping-pong":
             messages.append("Creating ping-pong effect...")
