@@ -8,6 +8,7 @@ import random
 import warnings
 import subprocess
 import psutil  # for system stats - gpu/cpu etc
+import threading # for model download monitoring
 from datetime import datetime
 from pathlib import Path
 from subprocess import getoutput
@@ -98,27 +99,72 @@ def check_weights_exist():
     ]
     return all(os.path.exists(path) for path in required_paths)
 
+def get_dir_size(path):
+    """Get directory size in GB"""
+    size = 0
+    for root, _, files in os.walk(path):
+        size += sum(os.path.getsize(os.path.join(root, name)) for name in files)
+    return size / (1024 * 1024 * 1024)  # Convert to GB
+
 def download_model():
+    """Download model with size-based progress tracking"""
     if not check_weights_exist():
-        print("Downloading model weights...")
-        snapshot_download(
-            repo_id='rhymes-ai/Allegro',
-            allow_patterns=[
-                'scheduler/**',
-                'text_encoder/**',
-                'tokenizer/**',
-                'transformer/**',
-                'vae/**',
-            ],
-            local_dir=weights_dir,
-        )
-        download_button.visible = False
-        return "Model weights downloaded successfully!"
-    return "Model weights already present, skipping download."
-    
+        messages = [
+            "\n🚀 DOWNLOADING MODEL WEIGHTS (40GB)",
+            "═" * 25,
+            "📂 Location: " + os.path.abspath(weights_dir),
+            "═" * 25
+        ]
+        
+        try:
+            progress = gr.Progress()
+            download_thread = threading.Thread(target=snapshot_download, kwargs={
+                'repo_id': 'rhymes-ai/Allegro',
+                'allow_patterns': [
+                    'scheduler/**',
+                    'text_encoder/**',
+                    'tokenizer/**',
+                    'transformer/**',
+                    'vae/**',
+                ],
+                'local_dir': weights_dir,
+                'max_workers': 4
+            })
+            download_thread.start()
+            
+            # Monitor download progress
+            total_size = 41.2  # Expected size in GB
+            while download_thread.is_alive():
+                current_size = get_dir_size(weights_dir)
+                progress_pct = min(current_size / total_size, 0.99)  # Cap at 99% until complete
+                progress(progress_pct, f"Downloaded: {current_size:.1f}GB / {total_size}GB")
+                time.sleep(2)  # Check every 2 seconds
+                
+            download_thread.join()
+            progress(1.0, "Download complete!")
+            
+            messages.extend([
+                "✨ Download complete!",
+                f"✓ Final size: {get_dir_size(weights_dir):.1f}GB",
+                "═" * 25
+            ])
+            return "\n".join(messages), None, gr.update(visible=False), gr.update(visible=True)  # Update both buttons
+            
+        except Exception as e:
+            messages.extend([
+                "❌ Download failed:",
+                f"• {str(e)}",
+                "Please check your connection and try again",
+                "═" * 25
+            ])
+            return "\n".join(messages), None, gr.update(visible=True), gr.update(visible=False)  # Update both buttons
+            
+    return "Model weights already present, skipping download.", None, gr.update(visible=False), gr.update(visible=True)
+
 def check_button_visibility():
     return not check_weights_exist()
-    
+def check_generate_button_visibility():
+    return check_weights_exist()
     
 def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_steps, 
                  seed, enable_cpu_offload, target_fps=15, progress=gr.Progress()):
@@ -1578,10 +1624,10 @@ title = """<style>.allegro-banner{background:linear-gradient(to bottom,#162828,#
 with gr.Blocks() as demo:
     #gr.HTML(title)
     with gr.Row():
-        video_output = gr.Video(label="Generated Video", height=540)  # limit vertical expansion for user vids
+        video_output = gr.Video(label="Generated Video", height=540)
     with gr.Row():
-        download_button = gr.Button("Download txt2vid Models First! (40GB) - not required for Tool Box.", visible=check_button_visibility(), variant="huggingface", scale=10)
-        submit_btn = gr.Button("Generate Video", variant="primary", scale=4)
+        download_button = gr.Button("Download txt2vid Models First! (40GB) - not required for Tool Box.", variant="primary", visible=check_button_visibility())
+        submit_btn = gr.Button("Generate Video", variant="primary", scale=4, visible=check_generate_button_visibility())
         transfer_to_toolbox_btn = gr.Button("⬇️ Send to Tool Box", visible=False, scale=1, variant="huggingface")
         
     with gr.Row():        
@@ -1767,7 +1813,11 @@ with gr.Blocks() as demo:
 
     # Event handlers
     
-    download_button.click(fn=download_model, outputs=console_out)
+    download_button.click(
+        fn=download_model,
+        outputs=[console_out, video_output, download_button, submit_btn],  # Add submit_btn
+        show_progress=True
+    )
     
     random_seed.click(fn=randomize_seed, outputs=seed)
     
@@ -1919,8 +1969,7 @@ with gr.Blocks() as demo:
             "0x fps",   # process_fps
             1.0,        # speed_factor
             None,       # output_processed (clear it)
-            True        # expand Tool Box accordion
-        )
+         )
     # main video to toolbox
     transfer_to_toolbox_btn.click(
         fn=transfer_to_toolbox,
