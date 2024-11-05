@@ -1614,6 +1614,21 @@ Process multiple videos overnight:
   (masterpiece), city streets in rain...
 
 """
+css = """
+.video-natural-size {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+}
+
+.video-natural-size video {
+    max-width: 100% !important;
+    max-height: 100vh !important;
+    width: auto !important;
+    height: auto !important;
+    object-fit: contain !important;
+}
+"""
 
     
 #UI title bar  
@@ -1621,10 +1636,10 @@ title = """<style>.allegro-banner{background:linear-gradient(to bottom,#162828,#
 
 
 # Create Gradio interface
-with gr.Blocks() as demo:
+with gr.Blocks(css=css) as demo:
     #gr.HTML(title)
     with gr.Row():
-        video_output = gr.Video(label="Generated Video", height=540)
+        video_output = gr.Video(label="Generated Video", elem_classes="video-natural-size")
     with gr.Row():
         download_button = gr.Button("Download txt2vid Models First! (40GB) - not required for Tool Box.", variant="primary", visible=check_button_visibility())
         submit_btn = gr.Button("Generate Video", variant="primary", scale=4, visible=check_generate_button_visibility())
