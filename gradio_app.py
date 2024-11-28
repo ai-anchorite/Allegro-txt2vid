@@ -290,12 +290,12 @@ def run_inference(user_prompt, negative_prompt, guidance_scale, num_sampling_ste
         out_video = allegro_pipeline(
             user_prompt, 
             negative_prompt=negative_prompt, 
-            # num_frames=88,
-            # height=720,
-            # width=1280,
-            num_frames=8,  #fast 1-minute test inference
-            height=256,
-            width=512,
+            num_frames=88,
+            height=720,
+            width=1280,
+            # num_frames=8,  #fast 1-minute test inference
+            # height=256,
+            # width=512,
             num_inference_steps=num_sampling_steps,
             guidance_scale=guidance_scale,
             max_sequence_length=512,
