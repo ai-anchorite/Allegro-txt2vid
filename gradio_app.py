@@ -2000,7 +2000,7 @@ with gr.Blocks(css=css) as demo:
                 submit_btn = gr.Button("Generate Txt2Video", variant="primary", scale=4, visible=check_generate_button_visibility())
                 transfer_to_toolbox_btn = gr.Button("⬇️ Send to Tool Box", visible=False, scale=1, variant="huggingface")
                 
-        with gr.Tab("i2v input - testing"):
+        with gr.Tab("Img2Vid Tab!"):
             with gr.Row():
                 with gr.Column():
                     first_frame = gr.Image(
