@@ -1480,10 +1480,11 @@ def clean_filename(filename):
     filename = re.sub(r'_\d{6}_\d{6}', '', filename)  # Removes YYMMDD_HHMMSS
     filename = re.sub(r'_\d{6}_\d{4}', '', filename)  # Removes YYMMDD_HHMM
     return filename.strip('_')  # Remove any trailing underscores
-        
 
 
-        
+ 
+# Img2Video: 
+
 def preprocess_images(first_frame, last_frame, height, width, device, dtype):
     """Prepare images for TI2V generation"""
     norm_fun = Lambda(lambda x: 2. * x - 1.)
@@ -1782,14 +1783,21 @@ def run_inference_ti2v(user_prompt, negative_prompt, first_frame, last_frame, gu
 def get_welcome_message():
     return """
 🎬 What to expect:
-• Generation takes about 1 hour per video (on a 3090)
-• Output will be 720 x 1280
-• Each video is ~88 frames 
-• 15fps, 30fps, or 60fps depending on Interpolation setting (doesn't affect duration)
-• The video models (40GB+) are downloaded manually via the big UI button
 
-## 📝 Notes: 
-• If you're only planning on using the manual tools in the Tool Box, ignore the Generate Video section and avoid the massive model downloads!
+Text to Video:
+- Generation takes about 1 hour per video (on a 3090)
+- Output will be 720 x 1280
+- Each video is ~88 frames 
+- 15fps, 30fps, or 60fps depending on Interpolation setting (doesn't affect duration)
+- The video models (40GB+) are downloaded manually via the big UI button
+
+Image to Video:
+- Upload images in the "i2v input" tab
+- Requires at least one input image
+- Prompts matter
+- Check the Img2Video section in Helpful Docs for more information
+- Uses separate model (24GB) - download only if needed
+- Takes ~90 minutes per video on a 3090
 
 
 ⚙️ Important Settings:
@@ -1858,7 +1866,7 @@ Tip: Start with presets, then fine-tune with manual controls!
 
 Note: I haven't really done much with these. Very, very easy to adjust them in the code to your tastes. 
 
-Presets can be altered by editing gradio_app.py -> update_sliders_for_preset() [currently around line 1045]
+Presets can be altered by editing gradio_app.py -> update_sliders_for_preset() [currently around line 1056]
 """
 
 def get_gen_info():
@@ -1988,7 +1996,7 @@ with gr.Blocks(css=css) as demo:
             with gr.Row():
                 video_output = gr.Video(label="Generated Video", interactive=False, elem_classes="video-size")
             with gr.Row():
-                download_button = gr.Button("Download Video Models First! (40GB) - not required for Tool Box.", variant="primary", visible=check_button_visibility())
+                download_button = gr.Button("Download Text2Video Models (40GB) - not required for Image2Video", variant="primary", visible=check_button_visibility())
                 submit_btn = gr.Button("Generate Txt2Video", variant="primary", scale=4, visible=check_generate_button_visibility())
                 transfer_to_toolbox_btn = gr.Button("⬇️ Send to Tool Box", visible=False, scale=1, variant="huggingface")
                 
@@ -2007,8 +2015,8 @@ with gr.Blocks(css=css) as demo:
                         elem_classes="image-preview"
                     )
             with gr.Row():
-                download_ti2v_button = gr.Button("Download TI2V Models First! (24GB)", variant="primary", visible=check_ti2v_button_visibility())
-                submit_ti2v_btn = gr.Button("Generate Text+Image2Video", variant="primary", visible=check_ti2v_generate_button_visibility())
+                download_ti2v_button = gr.Button("Download Img2Vid Models (24GB)", variant="primary", visible=check_ti2v_button_visibility())
+                submit_ti2v_btn = gr.Button("Generate Img2Video", variant="primary", visible=check_ti2v_generate_button_visibility())
                     
        
     with gr.Row():        
