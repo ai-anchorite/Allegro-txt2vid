@@ -6,6 +6,10 @@
 # References:
 # Open-Sora-Plan: https://github.com/PKU-YuanGroup/Open-Sora-Plan
 # --------------------------------------------------------
+import warnings
+warnings.filterwarnings('ignore', message='torch.backends.cuda.sdp_kernel.*', category=FutureWarning)
+warnings.filterwarnings('ignore', message='.*Torch was not compiled with flash attention.*', category=UserWarning)
+warnings.filterwarnings('ignore', message='.*sdp_utils.cpp.*', category=UserWarning)
 
 import html
 import inspect
