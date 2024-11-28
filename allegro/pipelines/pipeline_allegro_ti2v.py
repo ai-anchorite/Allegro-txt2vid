@@ -19,6 +19,10 @@ import torch
 from dataclasses import dataclass
 import tqdm
 from bs4 import BeautifulSoup
+import random
+import os
+import numpy as np
+import torch.nn.functional as F
 
 from diffusers import DiffusionPipeline
 from diffusers.schedulers import EulerAncestralDiscreteScheduler
@@ -35,11 +39,11 @@ from transformers import T5EncoderModel, T5Tokenizer
 
 logger = logging.get_logger(__name__)
 
-from allegro.models.transformers.transformer_3d_allegro import AllegroTransformer3DModel
+from allegro.models.transformers.transformer_3d_allegro_ti2v import AllegroTransformerTI2V3DModel
 from allegro.models.vae.vae_allegro import AllegroAutoencoderKL3D
 
 @dataclass
-class AllegroPipelineOutput(BaseOutput):
+class AllegroTI2VPipelineOutput(BaseOutput):
     r"""
     Output class for Allegro pipelines.
 
@@ -56,7 +60,7 @@ EXAMPLE_DOC_STRING = """
         >>> import torch
 
         >>> # You can replace the your_path_to_model with your own path.
-        >>> pipe = AllegroPipeline.from_pretrained(your_path_to_model, torch_dtype=torch.float16, trust_remote_code=True)
+        >>> pipe = AllegroTI2VPipeline.from_pretrained(your_path_to_model, torch_dtype=torch.float16, trust_remote_code=True)
 
         >>> prompt = "A small cactus with a happy face in the Sahara desert."
         >>> image = pipe(prompt).video[0]
@@ -108,9 +112,10 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-class AllegroPipeline(DiffusionPipeline):
+
+class AllegroTI2VPipeline(DiffusionPipeline):
     r"""
-    Pipeline for text-to-image generation using Allegro.
+    Pipeline for text conditioned image-to-video generation using Allegro.
 
     This model inherits from [`DiffusionPipeline`]. Check the superclass documentation for the generic methods the
     library implements for all the pipelines (such as downloading or saving, running on a particular device, etc.)
@@ -125,8 +130,8 @@ class AllegroPipeline(DiffusionPipeline):
         tokenizer (`T5Tokenizer`):
             Tokenizer of class
             [T5Tokenizer](https://huggingface.co/docs/transformers/model_doc/t5#transformers.T5Tokenizer).
-        transformer ([`AllegroTransformer3DModel`]):
-            A text conditioned `AllegroTransformer3DModel` to denoise the encoded image latents.
+        transformer ([`AllegroTransformerTI2V3DModel`]):
+            A text conditioned `AllegroTransformerTI2V3DModel` to denoise the encoded image latents.
         scheduler ([`SchedulerMixin`]):
             A scheduler to be used in combination with `transformer` to denoise the encoded image latents.
     """
@@ -142,7 +147,7 @@ class AllegroPipeline(DiffusionPipeline):
         tokenizer: Optional[T5Tokenizer] = None,
         text_encoder: Optional[T5EncoderModel] = None,
         vae: Optional[AllegroAutoencoderKL3D] = None,
-        transformer: Optional[AllegroTransformer3DModel] = None,
+        transformer: Optional[AllegroTransformerTI2V3DModel] = None,
         scheduler: Optional[EulerAncestralDiscreteScheduler] = None,
         device: torch.device = torch.device("cuda"),
         dtype: torch.dtype = torch.float16,
@@ -152,6 +157,15 @@ class AllegroPipeline(DiffusionPipeline):
         self.register_modules(
             tokenizer=tokenizer, text_encoder=text_encoder, vae=vae, transformer=transformer, scheduler=scheduler
         )
+
+    def _set_seed(self, seed):
+
+        seed = int(seed)
+        random.seed(seed)
+        os.environ["PYTHONHASHSEED"] = str(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
 
 
     # Adapted from diffusers.pipelines.deepfloyd_if.pipeline_if.encode_prompt
@@ -325,6 +339,8 @@ class AllegroPipeline(DiffusionPipeline):
         negative_prompt_embeds=None,
         prompt_attention_mask=None,
         negative_prompt_attention_mask=None,
+        conditional_images=None,
+        conditional_images_indices=None
     ):
         
         if num_frames <= 0:
@@ -383,7 +399,11 @@ class AllegroPipeline(DiffusionPipeline):
                     f" got: `prompt_attention_mask` {prompt_attention_mask.shape} != `negative_prompt_attention_mask`"
                     f" {negative_prompt_attention_mask.shape}."
                 )
-    
+            
+        if conditional_images is None or len(conditional_images) == 0 or conditional_images_indices is None or len(conditional_images_indices) == 0:
+            raise ValueError("Must provide `conditional_images` and `conditional_images_indices` at the same time.")
+
+
 
     # Copied from diffusers.pipelines.deepfloyd_if.pipeline_if.IFPipeline._text_preprocessing
     def _text_preprocessing(self, text, clean_caption=False):
@@ -531,6 +551,7 @@ class AllegroPipeline(DiffusionPipeline):
     def prepare_latents(
         self, batch_size, num_channels_latents, num_frames, height, width, dtype, device, generator, latents=None
     ):
+
         shape = (
             batch_size,
             num_channels_latents,
@@ -584,7 +605,9 @@ class AllegroPipeline(DiffusionPipeline):
         clean_caption: bool = True,
         max_sequence_length: int = 512,
         verbose: bool = True,
-    ) -> Union[AllegroPipelineOutput, Tuple]:
+        conditional_images: Optional[List[torch.FloatTensor]] = None,
+        conditional_images_indices: Optional[List[int]] = None,
+    ) -> Union[AllegroTI2VPipelineOutput, Tuple]:
         """
         Function invoked when calling the pipeline for generation.
 
@@ -674,6 +697,8 @@ class AllegroPipeline(DiffusionPipeline):
             negative_prompt_embeds,
             prompt_attention_mask,
             negative_prompt_attention_mask,
+            conditional_images,
+            conditional_images_indices,
         )
 
         # 2. Default height and width to transformer
@@ -720,6 +745,7 @@ class AllegroPipeline(DiffusionPipeline):
 
         # 5. Prepare latents.
         latent_channels = self.transformer.config.in_channels
+        
         latents = self.prepare_latents(
             batch_size * num_images_per_prompt,
             latent_channels,
@@ -741,11 +767,28 @@ class AllegroPipeline(DiffusionPipeline):
         # 7. Denoising loop
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
+        if conditional_images is not None:
+            mask, masked_video = self.prepare_mask_masked_video(
+                conditional_images, 
+                conditional_images_indices, 
+                num_frames,
+                batch_size,
+                height,
+                width,
+                num_images_per_prompt,
+                generator=generator,
+                device=latents.device,
+        )
+
         progress_wrap = tqdm.tqdm if verbose else (lambda x: x)
         for i, t in progress_wrap(list(enumerate(timesteps))):
-
-            latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-            latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+            if conditional_images is not None:
+                latent_model_input = self.scheduler.scale_model_input(latents, t)
+                latent_model_input = torch.cat([latent_model_input, masked_video, mask], dim=1)
+                latent_model_input = torch.cat([latent_model_input] * 2) if do_classifier_free_guidance else latent_model_input
+            else:
+                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
             current_timestep = t
             if not torch.is_tensor(current_timestep):
@@ -805,7 +848,7 @@ class AllegroPipeline(DiffusionPipeline):
             video = video[:, :num_frames, :height, :width]
         else:
             video = latents
-            return AllegroPipelineOutput(video=video)
+            return AllegroTI2VPipelineOutput(video=video)
 
         # Offload all models
         self.maybe_free_model_hooks()
@@ -813,10 +856,65 @@ class AllegroPipeline(DiffusionPipeline):
         if not return_dict:
             return (video,)
 
-        return AllegroPipelineOutput(video=video)
+        return AllegroTI2VPipelineOutput(video=video)
 
     def decode_latents(self, latents):
         video = self.vae.decode(latents.to(self.vae.dtype) / self.vae.scale_factor).sample
         # b t c h w -> b t h w c
         video = ((video / 2.0 + 0.5).clamp(0, 1) * 255).to(dtype=torch.uint8).cpu().permute(0, 1, 3, 4, 2).contiguous()
         return video
+
+    def prepare_mask_masked_video(
+        self, 
+        conditional_images, 
+        conditional_images_indices, 
+        num_frames, 
+        batch_size,
+        height,
+        width,
+        num_images_per_prompt=1, 
+        generator=None,
+        device="cuda",
+    ):
+        # NOTE ti2v
+        assert isinstance(conditional_images_indices, list) and isinstance(conditional_images_indices[0], int), "conditional_images_indices should be a list of int"  
+        if isinstance(conditional_images, list) and isinstance(conditional_images[0], torch.Tensor):
+            if len(conditional_images[0].shape) == 3:
+                conditional_images = [conditional_image.unsqueeze(1) for conditional_image in conditional_images] # C H W -> C 1 H W
+            elif len(conditional_images[0].shape) == 4:
+                conditional_images = [conditional_image.transpose(0, 1) for conditional_image in conditional_images] # 1 C H W -> C 1 H W
+            conditional_images = torch.cat(conditional_images, dim=1).to(device=device) # C F H W
+        elif isinstance(conditional_images, torch.Tensor):
+            assert len(conditional_images.shape) == 4, "The shape of conditional_images should be a tensor with 4 dim"
+            conditional_images = conditional_images.transpose(0, 1) # F C H W -> C F H W
+            conditional_images = conditional_images.to(device=device)
+        else:
+            raise ValueError("conditional_images should be a list of torch.Tensor")
+
+        input_video = torch.zeros([3, num_frames, height, width], dtype=self.vae.dtype, device=device)
+        input_video[:, conditional_images_indices] = conditional_images.to(input_video.dtype)
+
+        input_video = input_video.unsqueeze(0).repeat(batch_size * num_images_per_prompt, 1, 1, 1, 1)
+        
+        # default mode
+        B, C, T, H, W = input_video.shape
+        mask = torch.ones_like(input_video, device=input_video.device, dtype=input_video.dtype)
+        mask[:, :, conditional_images_indices] = 0
+        masked_video = input_video * (mask < 0.5)
+        masked_video = self.vae.encode(masked_video.to(device), local_batch_size=3).latent_dist.sample(generator=generator).mul_(self.vae.scale_factor)
+
+        mask = mask[:, :1]
+
+        mask = rearrange(mask, 'b c t h w -> (b c t) 1 h w')
+        latent_size = (height // self.vae.vae_scale_factor[1], width // self.vae.vae_scale_factor[2])
+        if num_frames % 2 == 1:
+            latent_size_t = (num_frames - 1) // self.vae.vae_scale_factor[0] + 1
+        else:
+            latent_size_t = num_frames // self.vae.vae_scale_factor[0]
+        mask = F.interpolate(mask, size=latent_size, mode='bilinear')
+        mask = rearrange(mask, '(b c t) 1 h w -> b c t h w', t=T, b=B)
+        mask = mask.view(batch_size, self.vae.vae_scale_factor[0], latent_size_t, *latent_size).contiguous()
+
+
+        
+        return mask, masked_video

@@ -1,41 +1,22 @@
-# Allegro-txt2vid-pinokio
-A Pinokio Install Script for the [Rhymes Allegro](https://github.com/rhymes-ai/Allegro) text-to-video model.
-
-## Sources
-* Installs a Pinokio fork: https://github.com/pinokiofactory/Allegro-txt2vid
-* Initial Gradio UI and associated code borrowed from: https://huggingface.co/spaces/fffiloni/allegro-text2video
-* RIFE Interpolation Model from [AlexWortega/RIFE](https://huggingface.co/AlexWortega/RIFE)
-
-
-## Important Notes
-* Can take over an hour to generate a result. Hopefully will be optimized soon. But yeah, 1 hour on a 3090.  4090 ~30 minutes. 
-* My GPU warms me at night. 
-* 12GB VRAM may be sufficient to run, although it does briefly spike high in a couple of places, so make sure you haven't disabled SYSMEM fallback. 
-* After the inference Steps have completed, there's a vae decode phase that can take quite a while. So don't panic and stop it prematurely!
-
-
-* Img2vid is in the works apparently: https://github.com/rhymes-ai/Allegro/issues/8
-* Yes, it's not (yet) optimized for consumer GPUs: https://github.com/rhymes-ai/Allegro/issues/20
-
-
-
-
-## Original Project README:
-
-
 <p align="center">
-<img src="https://github.com/rhymes-ai/Allegro/blob/main/assets/banner_white.gif"/>
+<img src="https://github.com/rhymes-ai/Allegro/blob/main/assets/TI2V_banner.gif"/>
 </p>
 
 <p align="center">
- <a href="https://rhymes.ai/allegro_gallery" target="_blank"> Gallery</a> · <a href="https://huggingface.co/rhymes-ai/Allegro" target="_blank">Hugging Face</a> · <a href="https://rhymes.ai/blog-details/allegro-advanced-video-generation-model" target="_blank">Blog</a> · <a href="https://arxiv.org/abs/2410.15458" target="_blank">Paper</a> · <a href="https://discord.com/invite/u8HxU23myj" target="_blank">Discord</a>  · <a href="https://docs.google.com/forms/d/e/1FAIpQLSfq4Ez48jqZ7ncI7i4GuL7UyCrltfdtrOCDnm_duXxlvh5YmQ/viewform" target="_blank">Join Waitlist</a> (Try it on Discord!) 
+ <a href="https://rhymes.ai/allegro_gallery" target="_blank"> Gallery</a> · <a href="https://huggingface.co/rhymes-ai/Allegro" target="_blank">Hugging Face</a> · <a href="https://rhymes.ai/blog-details/allegro-advanced-video-generation-model" target="_blank">Blog</a> · <a href="https://arxiv.org/abs/2410.15458" target="_blank">Paper</a> · <a href="https://discord.com/invite/u8HxU23myj" target="_blank">Discord</a> 
 </p> 
-Allegro is a powerful text-to-video model that generates high-quality videos up to 6 seconds at 15 FPS and 720p resolution from simple text input.
+
+[Allegro](huggingface.co/rhymes-ai/Allegro) is a powerful text-to-video model that generates high-quality videos up to 6 seconds at 15 FPS and 720p resolution from simple text input. [Allegro-TI2V](https://huggingface.co/rhymes-ai/Allegro-TI2V), a variant of [Allegro](https://huggingface.co/rhymes-ai/Allegro), extends this functionality by generating similar high-quality videos using text inputs along with first-frame and optionally last-frame image inputs.
 
 ## News 🔥
- - [24/10/30] 🚀 We release multi-card inference code and PAB in [Allegro-VideoSys](https://github.com/nightsnack/Allegro-VideoSys). With VideoSys framework, the inference time can be further reduced to 3 mins (8xH100) and 2 mins (8xH100+PAB). We also opened a PR to the original [VideoSys repo](https://github.com/NUS-HPC-AI-Lab/VideoSys).
 
- - [24/10/29] 🎉Congratulations that Allegro is merged into diffusers! Currently Allegro is supported in `0.32.0-dev0.` It will be integrated in the next release version. So for now, please use `pip install git+https://github.com/huggingface/diffusers.git@9214f4a3782a74e510eff7e09b59457fe8b63511` to install diffuser dev version. See [huggingface](https://huggingface.co/rhymes-ai/Allegro) for more details.
+ - [2024/11/25] 🚀 [Allegro-TI2V](https://huggingface.co/rhymes-ai/Allegro-TI2V) is open sourced! 
+
+ - [2024/10/30] 🚀 We release multi-card inference code and PAB in [Allegro-VideoSys](https://github.com/nightsnack/Allegro-VideoSys). With VideoSys framework, the inference time can be further reduced to 3 mins (8xH100) and 2 mins (8xH100+PAB). We also opened a PR to the original [VideoSys repo](https://github.com/NUS-HPC-AI-Lab/VideoSys).
+
+ - [2024/10/29] 🎉 Congratulations that Allegro is merged into diffusers! Currently Allegro is supported in `0.32.0-dev0.` It will be integrated in the next release version. So for now, please use `pip install git+https://github.com/huggingface/diffusers.git` to install diffuser dev version. See [huggingface](https://huggingface.co/rhymes-ai/Allegro) for more details.
+
+ - [2024/10/22]🚀 [Allegro](huggingface.co/rhymes-ai/Allegro) is open sourced! 
 
 
 
@@ -44,58 +25,62 @@ Allegro is a powerful text-to-video model that generates high-quality videos up 
 <table>
   <tr>
     <th>Model</th>
+    <td>Allegro-TI2V</td>
     <td>Allegro</td>
   </tr>
   <tr>
     <th>Description</th>
+    <td>Text-Image-to-Video Generation Model</td>
     <td>Text-to-Video Generation Model</td>
   </tr>
  <tr>
     <th>Download</th>
+    <td><a href="https://huggingface.co/rhymes-ai/Allegro-TI2V">Hugging Face</a></td>
     <td><a href="https://huggingface.co/rhymes-ai/Allegro">Hugging Face</a></td>
 </tr>
   <tr>
     <th rowspan="2">Parameter</th>
-    <td>VAE: 175M</td>
+    <td colspan="2">VAE: 175M</td>
   </tr>
   <tr>
-    <td>DiT: 2.8B</td>
+    <td colspan="2">DiT: 2.8B</td>
   </tr>
   <tr>
     <th rowspan="2">Inference Precision</th>
-    <td>VAE: FP32/TF32/BF16/FP16 (best in FP32/TF32)</td>
+    <td colspan="2">VAE: FP32/TF32/BF16/FP16 (best in FP32/TF32)</td>
   </tr>
   <tr>
-    <td>DiT/T5: BF16/FP32/TF32</td>
+    <td colspan="2">DiT/T5: BF16/FP32/TF32</td>
   </tr>
   <tr>
     <th>Context Length</th>
-    <td>79.2K</td>
+    <td colspan="2">79.2K</td>
   </tr>
   <tr>
     <th>Resolution</th>
-    <td>720 x 1280</td>
+    <td colspan="2">720 x 1280</td>
   </tr>
   <tr>
     <th>Frames</th>
-    <td>88</td>
+    <td colspan="2">88</td>
   </tr>
   <tr>
     <th>Video Length</th>
-    <td>6 seconds @ 15 FPS</td>
+    <td colspan="2">6 seconds @ 15 FPS</td>
   </tr>
   <tr>
     <th>Single GPU Memory Usage</th>
-    <td>9.3G BF16 (with cpu_offload)</td>
+    <td colspan="2">9.3G BF16 (with cpu_offload)</td>
   </tr>
     <tr>
     <th>Inference time</th>
-    <td>20 mins (single H100) / 3 mins (8xH100)</td>
+    <td colspan="2">20 mins (single H100) / 3 mins (8xH100)</td>
   </tr>
 </table>
 
 ## Quick Start
 ### Single Inference
+#### Allegro
 1. Download the [Allegro GitHub code](https://github.com/rhymes-ai/Allegro).
    
 2. Install the necessary requirements.
@@ -120,8 +105,51 @@ Allegro is a powerful text-to-video model that generates high-quality videos up 
     --num_sampling_steps 100 \
     --seed 42
     ```
-  
+
     Use `--enable_cpu_offload` to offload the model into CPU for less GPU memory cost (about 9.3G, compared to 27.5G if CPU offload is not enabled), but the inference time will increase significantly.
+
+
+5. (Optional) Interpolate the video to 30 FPS.
+
+    It is recommended to use [EMA-VFI](https://github.com/MCG-NJU/EMA-VFI) to interpolate the video from 15 FPS to 30 FPS.
+  
+    For better visual quality, please use imageio to save the video.
+   
+#### Allegro TI2V
+1. Download the [Allegro GitHub code](https://github.com/rhymes-ai/Allegro).
+   
+2. Install the necessary requirements.
+   
+   - Ensure Python >= 3.10, PyTorch >= 2.4, CUDA >= 12.4. For details, see [requirements.txt](https://github.com/rhymes-ai/Allegro/blob/main/requirements.txt).  
+    
+   - It is recommended to use Anaconda to create a new environment (Python >= 3.10) to run the following example.  
+   
+3. Download the [Allegro-TI2V model weights](https://huggingface.co/rhymes-ai/Allegro-TI2V).
+   
+4. Run inference.
+   
+    ```python
+    python single_inference_ti2v.py \
+    --user_prompt 'The car drives along the road' \
+    --first_frame your/path/to/first_frame_image.png \
+    --vae your/path/to/vae \
+    --dit your/path/to/transformer \
+    --text_encoder your/path/to/text_encoder \
+    --tokenizer your/path/to/tokenizer \
+    --guidance_scale 8 \
+    --num_sampling_steps 100 \
+    --seed 1427329220
+    ```
+  
+    The output video resolution is fixed at 720 × 1280. Input images with different resolutions will be automatically cropped and resized to fit.
+
+| Argument         | Description                                                                                                                              |
+|-----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--user_prompt`       | [Required] Text input for image-to-video generation.                                                                                          |
+| `--first_frame`       | [Required] First-frame image input for image-to-video generation.                                                                             |
+| `--last_frame`        | [Optional] If provided, the model will generate intermediate video content based on the specified first and last frame images.                |
+| <span style="background-color: #f6f8fa;">`--enable_cpu_offload`</span> | <span style="background-color: #f6f8fa;">[Optional] Offload the model into CPU for less GPU memory cost (about 9.3G, compared to 27.5G if CPU offload is not enabled), but the inference time will increase significantly.</span> |
+
 
 5. (Optional) Interpolate the video to 30 FPS.
 
@@ -130,14 +158,14 @@ Allegro is a powerful text-to-video model that generates high-quality videos up 
     For better visual quality, please use imageio to save the video.
 
 ### Multi-Card Inference
-We release multi-card inference code and PAB in [Allegro-VideoSys](https://github.com/nightsnack/Allegro-VideoSys). 
+For both Allegro & Allegro TI2V: We release multi-card inference code and PAB in [Allegro-VideoSys](https://github.com/nightsnack/Allegro-VideoSys). 
 
 ## Limitation
 - The model cannot render celebrities, legible text, specific locations, streets or buildings.
 
 ## Future Plan
 - [x] Multiple GPU inference and further speed up (PAB)
-- [ ] Text & Image-To-Video (TI2V) video generation
+- [x] Text & Image-To-Video (TI2V) video generation
 - [ ] Motion-controlled video generation
 - [ ] Visual quality enhancement
 
