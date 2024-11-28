@@ -1,5 +1,5 @@
-# Allegro-txt+ img2vid-pinokio
-A Pinokio Install Script for the [Rhymes Allegro](https://github.com/rhymes-ai/Allegro) video model.
+# Allegro - txt+img2vid
+A Pinokio Install for the [Rhymes Allegro](https://github.com/rhymes-ai/Allegro) video model.
 
 
 ## NEWS
