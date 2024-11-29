@@ -2145,14 +2145,14 @@ with gr.Blocks(css=css) as demo:
                         with gr.Tab("Welcome"):
                             welcome_info = gr.Textbox(
                                 value=get_welcome_message(),
-                                label="Welcome to Allegro txt2vid!",
+                                label="Welcome to Allegro!",
                                 lines=20,
                                 interactive=False
                             )
-                        with gr.Tab("Text + Img2Video"):
+                        with gr.Tab("Img2Video"):
                             gen_info = gr.Textbox(
                                 value=get_vid_info(),  
-                                label="Prompt and Batch",
+                                label="Img2Video",
                                 lines=20,
                                 interactive=False
                             ) 
